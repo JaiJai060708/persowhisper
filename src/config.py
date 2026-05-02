@@ -26,7 +26,10 @@ MAX_RECORDING_SEC = 5 * 60
 
 # --- Transcription -----------------------------------------------------------
 
-WHISPERX_MODEL = "large-v3"
+# User-selectable at runtime via the menu bar; persisted in SETTINGS_PATH.
+AVAILABLE_MODELS: tuple[str, ...] = ("large-v3", "medium.en")
+DEFAULT_MODEL = "large-v3"
+SETTINGS_PATH = Path.home() / ".persowhisper.json"
 
 
 # --- Paste -------------------------------------------------------------------

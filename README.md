@@ -31,7 +31,7 @@ whisperx-env/       # existing Python 3.12 venv with whisperx already installed
 
 1. **Install the extra Python deps into the existing venv:**
    ```bash
-   cd /Users/borisploix/Documents/Perso/PersoWhisper
+   cd /Users/borisploix/Projects/Perso/PersoWhisper
    ./whisperx-env/bin/pip install -r requirements.txt
    ```
 
@@ -60,6 +60,27 @@ whisperx-env/       # existing Python 3.12 venv with whisperx already installed
 ```bash
 ./run.sh
 ```
+
+## Build as a Mac app (optional)
+
+To launch from Finder / Spotlight / Launchpad with a real icon and the bundle's
+own TCC permission entries (so you don't have to re-grant Accessibility every
+time you switch terminal apps):
+
+```bash
+./build_app.sh
+```
+
+This produces `dist/PersoWhisper.app/` (built with py2app in alias mode — no
+copy of site-packages, the bundle uses the live `whisperx-env`) and symlinks
+it into `/Applications`. The bundle's launcher is a Mach-O binary signed with
+`com.borisploix.persowhisper` that embeds Python in-process; this is required
+so macOS TCC actually attributes Accessibility/Microphone grants to the app
+rather than to Homebrew's Python framework.
+
+Then, in **System Settings → Privacy & Security → Accessibility**, click `+`,
+add `/Applications/PersoWhisper.app`, and enable it. Microphone access is
+prompted on first recording.
 
 A `🎙` icon appears in the menu bar. While the script is running:
 

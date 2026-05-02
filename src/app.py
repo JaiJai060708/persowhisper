@@ -13,9 +13,8 @@ from typing import Optional
 import rumps
 from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
 
-from .config import ICON_IDLE, UI_TICK_SEC
+from .config import ICON_IDLE, UI_TICK_SEC, WHISPERX_BIN
 from .controller import Controller
-from .config import WHISPERX_BIN
 from .hotkey import HotkeyListener
 from .overlay import Overlay
 from .state import State

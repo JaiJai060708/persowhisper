@@ -16,6 +16,10 @@ venv/
 
 # macOS
 .DS_Store
+PersoWhisper.app/
+AppIcon.icns
+build/
+dist/
 
 # Editors
 .idea/

@@ -27,12 +27,21 @@ from AppKit import (
 from Foundation import NSMakeRect, NSString
 
 from .config import (
+    AVAILABLE_MODELS,
     LEVEL_GAIN,
     OVERLAY_BOTTOM_MARGIN,
     OVERLAY_HEIGHT,
     OVERLAY_WIDTH,
     WAVE_HISTORY,
 )
+from .settings import SETTINGS
+
+
+def _point_in_rect(pt, r) -> bool:
+    return (
+        r.origin.x <= pt.x < r.origin.x + r.size.width
+        and r.origin.y <= pt.y < r.origin.y + r.size.height
+    )
 
 
 class WaveView(NSView):
@@ -45,7 +54,22 @@ class WaveView(NSView):
         self._levels = collections.deque(maxlen=WAVE_HISTORY)
         self._mode = "recording"
         self._phase = 0.0
+        self._button_rects: dict = {}
         return self
+
+    def acceptsFirstMouse_(self, _event):
+        # Receive clicks even when our (nonactivating) panel isn't key —
+        # otherwise the first click on a non-key window is swallowed.
+        return True
+
+    def mouseDown_(self, event):
+        loc = event.locationInWindow()
+        pt = self.convertPoint_fromView_(loc, None)
+        for model, rect in self._button_rects.items():
+            if _point_in_rect(pt, rect):
+                if SETTINGS.set_model(model):
+                    self.setNeedsDisplay_(True)
+                return
 
     def setMode_(self, mode):
         if mode != self._mode:
@@ -89,6 +113,8 @@ class WaveView(NSView):
             (16.0, bounds.size.height - 24.0), attrs
         )
 
+        self._drawButtons_(bounds)
+
         wave_rect = NSMakeRect(
             16.0, 14.0, bounds.size.width - 32.0, bounds.size.height - 38.0
         )
@@ -96,6 +122,65 @@ class WaveView(NSView):
             self._drawWaveform_(wave_rect)
         else:
             self._drawShimmer_(wave_rect)
+
+    def _drawButtons_(self, bounds):
+        """Draw the model picker pills, right-aligned in the title row.
+        Updates self._button_rects so mouseDown_ can hit-test them."""
+        self._button_rects.clear()
+        font = NSFont.systemFontOfSize_(10.0)
+        sizing_attrs = {NSFontAttributeName: font}
+        widths = {}
+        for m in AVAILABLE_MODELS:
+            sz = NSString.stringWithString_(m).sizeWithAttributes_(sizing_attrs)
+            widths[m] = float(sz.width) + 14.0  # internal padding
+
+        gap = 6.0
+        btn_h = 18.0
+        btn_y = bounds.size.height - 27.0
+        right_pad = 14.0
+        total_w = sum(widths.values()) + gap * (len(AVAILABLE_MODELS) - 1)
+        x = bounds.size.width - right_pad - total_w
+
+        current = SETTINGS.model
+        for m in AVAILABLE_MODELS:
+            w = widths[m]
+            rect = NSMakeRect(x, btn_y, w, btn_h)
+            self._button_rects[m] = rect
+            active = m == current
+
+            fill_alpha = 0.20 if active else 0.06
+            NSColor.colorWithSRGBRed_green_blue_alpha_(
+                1.0, 1.0, 1.0, fill_alpha
+            ).setFill()
+            NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                rect, btn_h / 2.0, btn_h / 2.0
+            ).fill()
+            if active:
+                NSColor.colorWithSRGBRed_green_blue_alpha_(
+                    1.0, 1.0, 1.0, 0.7
+                ).setStroke()
+                stroke_path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                    rect, btn_h / 2.0, btn_h / 2.0
+                )
+                stroke_path.setLineWidth_(1.0)
+                stroke_path.stroke()
+
+            text_color = (
+                NSColor.whiteColor()
+                if active
+                else NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 1.0, 1.0, 0.6)
+            )
+            text_attrs = {
+                NSFontAttributeName: font,
+                NSForegroundColorAttributeName: text_color,
+            }
+            ns_text = NSString.stringWithString_(m)
+            text_size = ns_text.sizeWithAttributes_(text_attrs)
+            tx = rect.origin.x + (rect.size.width - float(text_size.width)) / 2.0
+            ty = rect.origin.y + (rect.size.height - float(text_size.height)) / 2.0
+            ns_text.drawAtPoint_withAttributes_((tx, ty), text_attrs)
+
+            x += w + gap
 
     def _drawWaveform_(self, rect):
         bar_w = 3.0
@@ -165,7 +250,9 @@ class Overlay:
         panel.setOpaque_(False)
         panel.setBackgroundColor_(NSColor.clearColor())
         panel.setHasShadow_(True)
-        panel.setIgnoresMouseEvents_(True)
+        # Receive clicks (the model-picker pills) but stay nonactivating so
+        # the user's foreground app keeps key focus for the eventual paste.
+        panel.setIgnoresMouseEvents_(False)
         panel.setHidesOnDeactivate_(False)
         panel.setFloatingPanel_(True)
         panel.setBecomesKeyOnlyIfNeeded_(True)

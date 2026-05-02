@@ -2,3 +2,4 @@ pynput>=1.7
 sounddevice>=0.4
 soundfile>=0.12
 rumps>=0.4
+py2app>=0.28

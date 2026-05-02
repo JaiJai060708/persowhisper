@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Pre-download (or verify) the faster-whisper models PersoWhisper uses.
+# Forwards extra args, e.g. ./setup.sh medium.en
+set -euo pipefail
+cd "$(dirname "$0")"
+
+exec ./whisperx-env/bin/python -m src.download "$@"
