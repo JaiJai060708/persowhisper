@@ -1,0 +1,32 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+
+# Virtualenvs
+whisperx-env/
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# whisperx test artifacts / audio files
+*.srt
+*.vtt
+*.tsv
+*.aud
+*.wav
+*.m4a
+persowhisper_*.json
