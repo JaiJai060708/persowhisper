@@ -12,7 +12,11 @@ from AppKit import (
     NSColor,
     NSFont,
     NSFontAttributeName,
+    NSFontWeightMedium,
+    NSFontWeightSemibold,
     NSForegroundColorAttributeName,
+    NSGraphicsContext,
+    NSGradient,
     NSPanel,
     NSScreen,
     NSStatusWindowLevel,
@@ -24,7 +28,7 @@ from AppKit import (
     NSWindowStyleMaskBorderless,
     NSWindowStyleMaskNonactivatingPanel,
 )
-from Foundation import NSMakeRect, NSString
+from Foundation import NSMakePoint, NSMakeRect, NSString
 
 from .config import (
     AVAILABLE_MODELS,
@@ -35,6 +39,19 @@ from .config import (
     WAVE_HISTORY,
 )
 from .settings import SETTINGS
+
+
+_INK = (0.030, 0.035, 0.045)
+_INK_2 = (0.075, 0.088, 0.105)
+_TEAL = (0.000, 0.760, 0.720)
+_CORAL = (1.000, 0.380, 0.250)
+_GOLD = (1.000, 0.720, 0.240)
+_TEXT = (0.940, 0.960, 0.965)
+
+
+def _srgb(rgb, alpha=1.0):
+    r, g, b = rgb
+    return NSColor.colorWithSRGBRed_green_blue_alpha_(r, g, b, alpha)
 
 
 def _point_in_rect(pt, r) -> bool:
@@ -93,24 +110,63 @@ class WaveView(NSView):
     def drawRect_(self, _dirty):
         bounds = self.bounds()
         bg = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-            bounds, 18.0, 18.0
+            NSMakeRect(0.5, 0.5, bounds.size.width - 1.0, bounds.size.height - 1.0),
+            19.0,
+            19.0,
         )
-        NSColor.colorWithSRGBRed_green_blue_alpha_(0.04, 0.04, 0.06, 0.88).setFill()
-        bg.fill()
+        gradient = NSGradient.alloc().initWithStartingColor_endingColor_(
+            _srgb(_INK_2, 0.94), _srgb(_INK, 0.94)
+        )
+        gradient.drawInBezierPath_angle_(bg, 90.0)
+
+        NSGraphicsContext.saveGraphicsState()
+        bg.addClip()
+        band = NSBezierPath.bezierPath()
+        band.moveToPoint_(NSMakePoint(0, bounds.size.height * 0.65))
+        band.lineToPoint_(NSMakePoint(bounds.size.width, bounds.size.height * 0.82))
+        band.lineToPoint_(NSMakePoint(bounds.size.width, bounds.size.height))
+        band.lineToPoint_(NSMakePoint(0, bounds.size.height))
+        band.closePath()
+        _srgb(_TEAL, 0.12).setFill()
+        band.fill()
+
+        accent = NSBezierPath.bezierPath()
+        accent.moveToPoint_(NSMakePoint(0, 0))
+        accent.lineToPoint_(NSMakePoint(bounds.size.width * 0.52, 0))
+        accent.lineToPoint_(NSMakePoint(bounds.size.width * 0.16, bounds.size.height * 0.24))
+        accent.lineToPoint_(NSMakePoint(0, bounds.size.height * 0.18))
+        accent.closePath()
+        _srgb(_CORAL, 0.12).setFill()
+        accent.fill()
+        NSGraphicsContext.restoreGraphicsState()
+
+        _srgb((1, 1, 1), 0.16).setStroke()
+        bg.setLineWidth_(1.0)
+        bg.stroke()
 
         if self._mode == "recording":
-            title = "● Recording"
-            title_color = NSColor.systemRedColor()
+            title = "Recording"
+            title_color = _srgb(_CORAL)
+            status_color = _srgb(_CORAL)
         else:
             title = "Transcribing…"
-            title_color = NSColor.whiteColor()
+            title_color = _srgb(_TEXT)
+            status_color = _srgb(_TEAL)
+
+        dot = NSBezierPath.bezierPathWithOvalInRect_(
+            NSMakeRect(16.0, bounds.size.height - 23.0, 8.0, 8.0)
+        )
+        status_color.setFill()
+        dot.fill()
 
         attrs = {
-            NSFontAttributeName: NSFont.systemFontOfSize_(11.0),
+            NSFontAttributeName: NSFont.systemFontOfSize_weight_(
+                11.0, NSFontWeightSemibold
+            ),
             NSForegroundColorAttributeName: title_color,
         }
         NSString.stringWithString_(title).drawAtPoint_withAttributes_(
-            (16.0, bounds.size.height - 24.0), attrs
+            (30.0, bounds.size.height - 24.0), attrs
         )
 
         self._drawButtons_(bounds)
@@ -127,7 +183,7 @@ class WaveView(NSView):
         """Draw the model picker pills, right-aligned in the title row.
         Updates self._button_rects so mouseDown_ can hit-test them."""
         self._button_rects.clear()
-        font = NSFont.systemFontOfSize_(10.0)
+        font = NSFont.systemFontOfSize_weight_(10.0, NSFontWeightMedium)
         sizing_attrs = {NSFontAttributeName: font}
         widths = {}
         for m in AVAILABLE_MODELS:
@@ -148,17 +204,13 @@ class WaveView(NSView):
             self._button_rects[m] = rect
             active = m == current
 
-            fill_alpha = 0.20 if active else 0.06
-            NSColor.colorWithSRGBRed_green_blue_alpha_(
-                1.0, 1.0, 1.0, fill_alpha
-            ).setFill()
+            fill = _srgb(_TEAL, 0.22) if active else _srgb((1.0, 1.0, 1.0), 0.07)
+            fill.setFill()
             NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
                 rect, btn_h / 2.0, btn_h / 2.0
             ).fill()
             if active:
-                NSColor.colorWithSRGBRed_green_blue_alpha_(
-                    1.0, 1.0, 1.0, 0.7
-                ).setStroke()
+                _srgb(_TEAL, 0.82).setStroke()
                 stroke_path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
                     rect, btn_h / 2.0, btn_h / 2.0
                 )
@@ -166,9 +218,9 @@ class WaveView(NSView):
                 stroke_path.stroke()
 
             text_color = (
-                NSColor.whiteColor()
+                _srgb(_TEXT)
                 if active
-                else NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 1.0, 1.0, 0.6)
+                else _srgb((1.0, 1.0, 1.0), 0.62)
             )
             text_attrs = {
                 NSFontAttributeName: font,
@@ -194,9 +246,10 @@ class WaveView(NSView):
             levels = [0.0] * (max_bars - len(levels)) + levels
         x = rect.origin.x + (rect.size.width - max_bars * slot) / 2.0
         cy = rect.origin.y + rect.size.height / 2.0
-        NSColor.whiteColor().setFill()
         for v in levels:
             h = 2.0 + v * (rect.size.height - 2.0)
+            color = _TEAL if v > 0.28 else (1.0, 1.0, 1.0)
+            _srgb(color, 0.46 + min(0.48, v * 0.70)).setFill()
             NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
                 NSMakeRect(x, cy - h / 2.0, bar_w, h), 1.5, 1.5
             ).fill()
@@ -216,9 +269,8 @@ class WaveView(NSView):
             alpha = 0.35 + 0.55 * (
                 math.sin(self._phase * 0.6 + t * math.pi * 1.5) * 0.5 + 0.5
             )
-            NSColor.colorWithSRGBRed_green_blue_alpha_(
-                1.0, 1.0, 1.0, alpha
-            ).setFill()
+            color = _TEAL if i % 4 else _GOLD
+            _srgb(color, alpha).setFill()
             NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
                 NSMakeRect(x0 + i * slot, cy - h / 2.0, bar_w, h), 1.5, 1.5
             ).fill()

@@ -8,12 +8,15 @@ file" button returns to the hero view.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Callable, Optional
 
 import objc
 from AppKit import (
     NSApp,
+    NSAppearance,
+    NSAppearanceNameVibrantDark,
     NSAttributedString,
     NSBackingStoreBuffered,
     NSBezelStyleRounded,
@@ -29,6 +32,7 @@ from AppKit import (
     NSFontWeightRegular,
     NSFontWeightSemibold,
     NSForegroundColorAttributeName,
+    NSGraphicsContext,
     NSGradient,
     NSMakeRange,
     NSObject,
@@ -44,6 +48,7 @@ from AppKit import (
     NSURL,
     NSView,
     NSViewHeightSizable,
+    NSViewMaxXMargin,
     NSViewMaxYMargin,
     NSViewMinXMargin,
     NSViewMinYMargin,
@@ -59,7 +64,7 @@ from AppKit import (
     NSWindowStyleMaskResizable,
     NSWindowStyleMaskTitled,
 )
-from Foundation import NSDictionary, NSMakeRect, NSMakeSize, NSOperationQueue
+from Foundation import NSDictionary, NSMakePoint, NSMakeRect, NSMakeSize, NSOperationQueue
 
 from .config import SUPPORTED_AUDIO_EXTS, SUPPORTED_VIDEO_EXTS
 from .log_stream import (
@@ -78,6 +83,20 @@ from .transcribe import Segment
 _ALL_EXTS = set(e.lower() for e in (SUPPORTED_AUDIO_EXTS + SUPPORTED_VIDEO_EXTS))
 _TAB_TRANSCRIPT = 0
 _TAB_LOGS = 1
+
+_INK = (0.035, 0.041, 0.050)
+_INK_2 = (0.060, 0.071, 0.084)
+_PANEL = (0.105, 0.123, 0.140)
+_TEAL = (0.000, 0.760, 0.720)
+_CORAL = (1.000, 0.380, 0.250)
+_GOLD = (1.000, 0.720, 0.240)
+_TEXT = (0.940, 0.960, 0.965)
+_TEXT_MUTED = (0.610, 0.670, 0.700)
+
+
+def _srgb(rgb, alpha=1.0):
+    r, g, b = rgb
+    return NSColor.colorWithSRGBRed_green_blue_alpha_(r, g, b, alpha)
 
 
 def _is_supported(path: Path) -> bool:
@@ -102,7 +121,7 @@ def _hairline(frame, alpha=0.10):
     v = NSView.alloc().initWithFrame_(frame)
     v.setWantsLayer_(True)
     v.layer().setBackgroundColor_(
-        NSColor.colorWithSRGBRed_green_blue_alpha_(1, 1, 1, alpha).CGColor()
+        _srgb((1, 1, 1), alpha).CGColor()
     )
     return v
 
@@ -121,8 +140,147 @@ def _run_on_main(callable_, *args) -> None:
     NSOperationQueue.mainQueue().addOperationWithBlock_(lambda: callable_(*args))
 
 
+class ThemeBackdropView(NSView):
+    """Window-wide acoustic theme: ink base, angled bands, and soft wave lines."""
+
+    def isOpaque(self):
+        return True
+
+    def drawRect_(self, _rect):
+        bounds = self.bounds()
+        base = NSBezierPath.bezierPathWithRect_(bounds)
+        gradient = NSGradient.alloc().initWithStartingColor_endingColor_(
+            _srgb(_INK_2), _srgb(_INK)
+        )
+        gradient.drawInBezierPath_angle_(base, 90.0)
+
+        NSGraphicsContext.saveGraphicsState()
+        base.addClip()
+
+        top = NSBezierPath.bezierPath()
+        top.moveToPoint_(NSMakePoint(0, bounds.size.height * 0.72))
+        top.lineToPoint_(NSMakePoint(bounds.size.width, bounds.size.height * 0.88))
+        top.lineToPoint_(NSMakePoint(bounds.size.width, bounds.size.height))
+        top.lineToPoint_(NSMakePoint(0, bounds.size.height))
+        top.closePath()
+        _srgb(_TEAL, 0.090).setFill()
+        top.fill()
+
+        lower = NSBezierPath.bezierPath()
+        lower.moveToPoint_(NSMakePoint(0, 0))
+        lower.lineToPoint_(NSMakePoint(bounds.size.width, 0))
+        lower.lineToPoint_(NSMakePoint(bounds.size.width, bounds.size.height * 0.22))
+        lower.lineToPoint_(NSMakePoint(0, bounds.size.height * 0.06))
+        lower.closePath()
+        _srgb(_CORAL, 0.060).setFill()
+        lower.fill()
+
+        for i in range(7):
+            y = 42.0 + i * 54.0
+            line = NSBezierPath.bezierPath()
+            line.moveToPoint_(NSMakePoint(-24.0, y))
+            line.curveToPoint_controlPoint1_controlPoint2_(
+                NSMakePoint(bounds.size.width + 28.0, y + 20.0),
+                NSMakePoint(bounds.size.width * 0.28, y + 34.0),
+                NSMakePoint(bounds.size.width * 0.68, y - 24.0),
+            )
+            _srgb((1, 1, 1), 0.025 + i * 0.003).setStroke()
+            line.setLineWidth_(1.0)
+            line.stroke()
+
+        NSGraphicsContext.restoreGraphicsState()
+
+
+class ContentSurfaceView(NSView):
+    """Subtle framed surface used behind transcript and logs."""
+
+    def drawRect_(self, _rect):
+        bounds = self.bounds()
+        rect = NSMakeRect(
+            bounds.origin.x + 0.5,
+            bounds.origin.y + 0.5,
+            bounds.size.width - 1.0,
+            bounds.size.height - 1.0,
+        )
+        path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(rect, 14.0, 14.0)
+        gradient = NSGradient.alloc().initWithStartingColor_endingColor_(
+            _srgb(_PANEL, 0.64), _srgb((0.070, 0.082, 0.096), 0.76)
+        )
+        gradient.drawInBezierPath_angle_(path, 90.0)
+        _srgb((1, 1, 1), 0.12).setStroke()
+        path.setLineWidth_(1.0)
+        path.stroke()
+
+
+class LogoMarkView(NSView):
+    """PersoWhisper mark used in the header and hero."""
+
+    def drawRect_(self, _rect):
+        bounds = self.bounds()
+        side = min(bounds.size.width, bounds.size.height)
+        x = bounds.origin.x + (bounds.size.width - side) / 2.0
+        y = bounds.origin.y + (bounds.size.height - side) / 2.0
+        rect = NSMakeRect(x + side * 0.04, y + side * 0.04, side * 0.92, side * 0.92)
+        radius = side * 0.24
+        shell = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+            rect, radius, radius
+        )
+        gradient = NSGradient.alloc().initWithStartingColor_endingColor_(
+            _srgb((0.030, 0.100, 0.125)), _srgb((0.020, 0.035, 0.050))
+        )
+        gradient.drawInBezierPath_angle_(shell, 132.0)
+
+        NSGraphicsContext.saveGraphicsState()
+        shell.addClip()
+
+        teal = NSBezierPath.bezierPath()
+        teal.moveToPoint_(NSMakePoint(rect.origin.x, rect.origin.y + side * 0.62))
+        teal.lineToPoint_(NSMakePoint(rect.origin.x + side * 0.86, rect.origin.y + side * 0.96))
+        teal.lineToPoint_(NSMakePoint(rect.origin.x + side * 0.96, rect.origin.y + side * 0.74))
+        teal.lineToPoint_(NSMakePoint(rect.origin.x + side * 0.18, rect.origin.y + side * 0.46))
+        teal.closePath()
+        _srgb(_TEAL, 0.42).setFill()
+        teal.fill()
+
+        coral = NSBezierPath.bezierPath()
+        coral.moveToPoint_(NSMakePoint(rect.origin.x + side * 0.04, rect.origin.y + side * 0.14))
+        coral.lineToPoint_(NSMakePoint(rect.origin.x + side * 0.68, rect.origin.y + side * 0.36))
+        coral.lineToPoint_(NSMakePoint(rect.origin.x + side * 0.96, rect.origin.y + side * 0.18))
+        coral.lineToPoint_(NSMakePoint(rect.origin.x + side * 0.22, rect.origin.y))
+        coral.closePath()
+        _srgb(_CORAL, 0.48).setFill()
+        coral.fill()
+
+        NSGraphicsContext.restoreGraphicsState()
+
+        _srgb((1, 1, 1), 0.20).setStroke()
+        shell.setLineWidth_(1.0)
+        shell.stroke()
+
+        wave = NSBezierPath.bezierPath()
+        wave.moveToPoint_(NSMakePoint(rect.origin.x + side * 0.20, rect.origin.y + side * 0.50))
+        wave.lineToPoint_(NSMakePoint(rect.origin.x + side * 0.34, rect.origin.y + side * 0.68))
+        wave.lineToPoint_(NSMakePoint(rect.origin.x + side * 0.48, rect.origin.y + side * 0.30))
+        wave.lineToPoint_(NSMakePoint(rect.origin.x + side * 0.62, rect.origin.y + side * 0.68))
+        wave.lineToPoint_(NSMakePoint(rect.origin.x + side * 0.80, rect.origin.y + side * 0.42))
+        _srgb(_TEXT, 0.94).setStroke()
+        wave.setLineWidth_(max(2.0, side * 0.065))
+        wave.stroke()
+
+        dot = NSBezierPath.bezierPathWithOvalInRect_(
+            NSMakeRect(
+                rect.origin.x + side * 0.72,
+                rect.origin.y + side * 0.66,
+                side * 0.13,
+                side * 0.13,
+            )
+        )
+        _srgb(_GOLD, 0.95).setFill()
+        dot.fill()
+
+
 class DropView(NSView):
-    """Rounded gradient drop zone with dashed accent border + drag highlight."""
+    """Rounded acoustic drop zone with waveform texture and drag highlight."""
 
     def initWithFrame_(self, frame):
         self = objc.super(DropView, self).initWithFrame_(frame)
@@ -151,26 +309,58 @@ class DropView(NSView):
             bounds.size.width - 2 * inset,
             bounds.size.height - 2 * inset,
         )
-        radius = 18.0
+        radius = 22.0
         path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(rect, radius, radius)
 
         if self._dragging:
-            top = NSColor.colorWithSRGBRed_green_blue_alpha_(0.40, 0.62, 1.00, 0.30)
-            bot = NSColor.colorWithSRGBRed_green_blue_alpha_(0.20, 0.45, 0.95, 0.18)
-            border = NSColor.colorWithSRGBRed_green_blue_alpha_(0.35, 0.60, 1.00, 0.95)
+            top = _srgb((0.050, 0.600, 0.650), 0.36)
+            bot = _srgb((0.090, 0.240, 0.500), 0.30)
+            border = _srgb(_TEAL, 0.98)
             border_w = 2.0
         else:
-            top = NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 1.0, 1.0, 0.06)
-            bot = NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 1.0, 1.0, 0.02)
-            border = NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 1.0, 1.0, 0.18)
+            top = _srgb((0.150, 0.190, 0.210), 0.56)
+            bot = _srgb((0.065, 0.074, 0.086), 0.76)
+            border = _srgb((1.0, 1.0, 1.0), 0.18)
             border_w = 1.5
 
         gradient = NSGradient.alloc().initWithStartingColor_endingColor_(bot, top)
         gradient.drawInBezierPath_angle_(path, 90.0)
 
+        NSGraphicsContext.saveGraphicsState()
+        path.addClip()
+        band = NSBezierPath.bezierPath()
+        band.moveToPoint_(NSMakePoint(rect.origin.x, rect.origin.y + rect.size.height * 0.64))
+        band.lineToPoint_(NSMakePoint(rect.origin.x + rect.size.width, rect.origin.y + rect.size.height * 0.78))
+        band.lineToPoint_(NSMakePoint(rect.origin.x + rect.size.width, rect.origin.y + rect.size.height))
+        band.lineToPoint_(NSMakePoint(rect.origin.x, rect.origin.y + rect.size.height))
+        band.closePath()
+        _srgb(_TEAL, 0.105 if self._dragging else 0.065).setFill()
+        band.fill()
+
+        wave_y = rect.origin.y + rect.size.height * 0.30
+        wave_h = rect.size.height * 0.26
+        slots = 34
+        slot = rect.size.width / slots
+        for i in range(slots):
+            t = i / max(1, slots - 1)
+            mag = 0.20 + 0.80 * (
+                math.sin(t * math.pi * 3.0) * math.sin(t * math.pi) * 0.5 + 0.5
+            )
+            h = 4.0 + mag * wave_h
+            x = rect.origin.x + i * slot + slot * 0.35
+            alpha = 0.11 + 0.11 * math.sin(t * math.pi)
+            _srgb(_TEAL if i % 3 else _GOLD, alpha).setFill()
+            NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                NSMakeRect(x, wave_y - h / 2.0, max(2.0, slot * 0.22), h),
+                2.0,
+                2.0,
+            ).fill()
+        NSGraphicsContext.restoreGraphicsState()
+
         border.setStroke()
         path.setLineWidth_(border_w)
-        path.setLineDash_count_phase_([7.0, 5.0], 2, 0.0)
+        if not self._dragging:
+            path.setLineDash_count_phase_([8.0, 6.0], 2, 0.0)
         path.stroke()
 
     def _first_supported_url(self, sender):
@@ -261,6 +451,7 @@ class DropWindowController(NSObject):
             rect, style, NSBackingStoreBuffered, False
         )
         win.setTitle_("PersoWhisper")
+        win.setAppearance_(NSAppearance.appearanceNamed_(NSAppearanceNameVibrantDark))
         win.setTitlebarAppearsTransparent_(True)
         win.setReleasedWhenClosed_(False)
         win.setMinSize_(NSMakeSize(560.0, 380.0))
@@ -279,24 +470,31 @@ class DropWindowController(NSObject):
         header_h = 72.0
         footer_h = 56.0
 
+        chrome = ThemeBackdropView.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
+        chrome.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+        bg.addSubview_(chrome)
+
         # --- Header -------------------------------------------------------
         header = NSView.alloc().initWithFrame_(NSMakeRect(0, ch - header_h, cw, header_h))
         header.setAutoresizingMask_(NSViewWidthSizable | NSViewMinYMargin)
 
+        header_logo = LogoMarkView.alloc().initWithFrame_(NSMakeRect(20, 16, 40, 40))
+        header.addSubview_(header_logo)
+
         title = _label(
-            "PersoWhisper", size=15, weight=NSFontWeightSemibold,
-            color=NSColor.labelColor(),
+            "PersoWhisper", size=16, weight=NSFontWeightSemibold,
+            color=_srgb(_TEXT),
         )
-        title.setFrame_(NSMakeRect(20, header_h - 52, cw - 330, 22))
+        title.setFrame_(NSMakeRect(70, header_h - 52, cw - 380, 22))
         title.setAutoresizingMask_(NSViewWidthSizable)
         header.addSubview_(title)
 
         subtitle = _label(
-            "Drop audio or video to transcribe",
+            "Local transcription workspace",
             size=11.5, weight=NSFontWeightRegular,
-            color=NSColor.tertiaryLabelColor(),
+            color=_srgb(_TEXT_MUTED),
         )
-        subtitle.setFrame_(NSMakeRect(20, 8, cw - 200, 16))
+        subtitle.setFrame_(NSMakeRect(70, 8, cw - 260, 16))
         subtitle.setAutoresizingMask_(NSViewWidthSizable)
         header.addSubview_(subtitle)
 
@@ -333,7 +531,7 @@ class DropWindowController(NSObject):
         pill.setAutoresizingMask_(NSViewMinXMargin)
         pill_label = _label(
             "", size=10, weight=NSFontWeightBold,
-            color=NSColor.labelColor(), align=NSTextAlignmentCenter,
+            color=_srgb(_TEXT), align=NSTextAlignmentCenter,
         )
         pill_label.setFrame_(NSMakeRect(0, 3, pill_w, pill_h - 4))
         pill.addSubview_(pill_label)
@@ -358,46 +556,58 @@ class DropWindowController(NSObject):
         drop.setOnDrop_(self._handle_drop)
         hero.addSubview_(drop)
 
-        glyph = _label(
-            "▼", size=44, weight=NSFontWeightRegular,
-            color=NSColor.colorWithSRGBRed_green_blue_alpha_(0.55, 0.70, 1.0, 0.75),
-            align=NSTextAlignmentCenter,
+        hero_logo = LogoMarkView.alloc().initWithFrame_(
+            NSMakeRect((cw - 72.0) / 2.0, body_h / 2.0 + 34.0, 72.0, 72.0)
         )
-        glyph.setFrame_(NSMakeRect(0, body_h / 2 + 38, cw, 56))
-        glyph.setAutoresizingMask_(NSViewWidthSizable | NSViewMinYMargin | NSViewMaxYMargin)
-        hero.addSubview_(glyph)
+        hero_logo.setAutoresizingMask_(
+            NSViewMinXMargin | NSViewMaxXMargin | NSViewMinYMargin | NSViewMaxYMargin
+        )
+        hero.addSubview_(hero_logo)
 
         hero_title = _label(
-            "Drop audio or video here",
-            size=22, weight=NSFontWeightSemibold,
-            color=NSColor.labelColor(), align=NSTextAlignmentCenter,
+            "Drop audio or video",
+            size=23, weight=NSFontWeightSemibold,
+            color=_srgb(_TEXT), align=NSTextAlignmentCenter,
         )
-        hero_title.setFrame_(NSMakeRect(0, body_h / 2 - 8, cw, 30))
+        hero_title.setFrame_(NSMakeRect(24, body_h / 2 - 14, cw - 48, 30))
         hero_title.setAutoresizingMask_(NSViewWidthSizable | NSViewMinYMargin | NSViewMaxYMargin)
         hero.addSubview_(hero_title)
 
         hero_sub = _label(
-            "Transcribed with the large model and speaker diarization",
+            "Fast local transcripts with speaker-aware output",
             size=12.5, weight=NSFontWeightRegular,
-            color=NSColor.secondaryLabelColor(), align=NSTextAlignmentCenter,
+            color=_srgb(_TEXT_MUTED), align=NSTextAlignmentCenter,
         )
-        hero_sub.setFrame_(NSMakeRect(0, body_h / 2 - 36, cw, 18))
+        hero_sub.setFrame_(NSMakeRect(32, body_h / 2 - 42, cw - 64, 18))
         hero_sub.setAutoresizingMask_(NSViewWidthSizable | NSViewMinYMargin | NSViewMaxYMargin)
         hero.addSubview_(hero_sub)
+
+        hero_meta = _label(
+            "MP3 · M4A · WAV · MOV · MP4",
+            size=10.5, weight=NSFontWeightMedium,
+            color=_srgb((0.620, 0.860, 0.840), 0.82), align=NSTextAlignmentCenter,
+        )
+        hero_meta.setFrame_(NSMakeRect(32, body_h / 2 - 70, cw - 64, 16))
+        hero_meta.setAutoresizingMask_(NSViewWidthSizable | NSViewMinYMargin | NSViewMaxYMargin)
+        hero.addSubview_(hero_meta)
 
         bg.addSubview_(hero)
 
         # Transcript subview
         transcript = NSView.alloc().initWithFrame_(body_frame)
         transcript.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
-        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, cw, body_h))
+        content_frame = NSMakeRect(20, 12, cw - 40, body_h - 24)
+        transcript_panel = ContentSurfaceView.alloc().initWithFrame_(content_frame)
+        transcript_panel.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+        transcript.addSubview_(transcript_panel)
+        scroll = NSScrollView.alloc().initWithFrame_(content_frame)
         scroll.setHasVerticalScroller_(True)
         scroll.setHasHorizontalScroller_(False)
         scroll.setAutohidesScrollers_(True)
         scroll.setDrawsBackground_(False)
         scroll.setBorderType_(0)
         scroll.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
-        tv = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, cw, body_h))
+        tv = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, cw - 40, body_h - 24))
         tv.setEditable_(False)
         tv.setSelectable_(True)
         tv.setRichText_(True)
@@ -411,14 +621,17 @@ class DropWindowController(NSObject):
         # Logs subview
         logs = NSView.alloc().initWithFrame_(body_frame)
         logs.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
-        log_scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, cw, body_h))
+        log_panel = ContentSurfaceView.alloc().initWithFrame_(content_frame)
+        log_panel.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+        logs.addSubview_(log_panel)
+        log_scroll = NSScrollView.alloc().initWithFrame_(content_frame)
         log_scroll.setHasVerticalScroller_(True)
         log_scroll.setHasHorizontalScroller_(False)
         log_scroll.setAutohidesScrollers_(True)
         log_scroll.setDrawsBackground_(False)
         log_scroll.setBorderType_(0)
         log_scroll.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
-        log_tv = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, cw, body_h))
+        log_tv = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, cw - 40, body_h - 24))
         log_tv.setEditable_(False)
         log_tv.setSelectable_(True)
         log_tv.setRichText_(True)
@@ -427,7 +640,7 @@ class DropWindowController(NSObject):
         log_tv.setAutoresizingMask_(NSViewWidthSizable)
         log_font = NSFont.monospacedSystemFontOfSize_weight_(11.5, NSFontWeightRegular)
         log_tv.setFont_(log_font)
-        log_tv.setTextColor_(NSColor.secondaryLabelColor())
+        log_tv.setTextColor_(_srgb((0.770, 0.820, 0.830)))
         log_scroll.setDocumentView_(log_tv)
         logs.addSubview_(log_scroll)
         bg.addSubview_(logs)
@@ -450,7 +663,7 @@ class DropWindowController(NSObject):
 
         status = _label(
             "", size=11.5, weight=NSFontWeightRegular,
-            color=NSColor.secondaryLabelColor(),
+            color=_srgb(_TEXT_MUTED),
         )
         status.setFrame_(NSMakeRect(48, (footer_h - 18) / 2, cw - 360, 18))
         status.setAutoresizingMask_(NSViewWidthSizable)
@@ -514,6 +727,7 @@ class DropWindowController(NSObject):
         btn = NSButton.alloc().initWithFrame_(NSMakeRect(x, y, w, h))
         btn.setTitle_(title)
         btn.setBezelStyle_(NSBezelStyleRounded)
+        btn.setFont_(NSFont.systemFontOfSize_weight_(12.0, NSFontWeightMedium))
         btn.setTarget_(self)
         btn.setAction_(selector)
         return btn
@@ -540,7 +754,7 @@ class DropWindowController(NSObject):
         self._spinner.stopAnimation_(None)
         self._status.setStringValue_("")
         self._title.setStringValue_("PersoWhisper")
-        self._subtitle.setStringValue_("Drop audio or video to transcribe")
+        self._subtitle.setStringValue_("Local transcription workspace")
         self._clear_text()
 
     def _show_transcript(self, path: Path) -> None:
