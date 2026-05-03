@@ -8,8 +8,10 @@ function and the menu bar all read/write the same place.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
+from typing import Optional
 
 from .config import AVAILABLE_MODELS, DEFAULT_MODEL, SETTINGS_PATH
 
@@ -18,6 +20,7 @@ class Settings:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._model = DEFAULT_MODEL
+        self._hf_token_file: Optional[str] = None
         self._load()
 
     def _load(self) -> None:
@@ -36,10 +39,16 @@ class Settings:
         m = data.get("model")
         if m in AVAILABLE_MODELS:
             self._model = m
+        t = data.get("hf_token")
+        if isinstance(t, str) and t.strip():
+            self._hf_token_file = t.strip()
 
     def _save(self) -> None:
+        payload: dict[str, str] = {"model": self._model}
+        if self._hf_token_file:
+            payload["hf_token"] = self._hf_token_file
         try:
-            SETTINGS_PATH.write_text(json.dumps({"model": self._model}, indent=2))
+            SETTINGS_PATH.write_text(json.dumps(payload, indent=2))
         except Exception as exc:
             print(f"[settings] failed to save {SETTINGS_PATH}: {exc}", file=sys.stderr)
 
@@ -58,6 +67,20 @@ class Settings:
             self._model = value
         self._save()
         return True
+
+    @property
+    def hf_token(self) -> Optional[str]:
+        """HF token resolved from env var first, then ~/.persowhisper.json."""
+        env = (
+            os.environ.get("HF_TOKEN")
+            or os.environ.get("HUGGING_FACE_TOKEN")
+            or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+            or os.environ.get("HUGGINGFACE_TOKEN")
+        )
+        if env and env.strip():
+            return env.strip()
+        with self._lock:
+            return self._hf_token_file
 
 
 SETTINGS = Settings()

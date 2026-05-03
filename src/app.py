@@ -10,11 +10,17 @@ from __future__ import annotations
 import sys
 from typing import Optional
 
+from .log_stream import install_stdio_bridge
+
+install_stdio_bridge()
+
 import rumps
-from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+from AppKit import NSApplication, NSApplicationActivationPolicyRegular
 
 from .config import ICON_IDLE, UI_TICK_SEC, WHISPERX_BIN
 from .controller import Controller
+from .drop_window import DropWindowController
+from .file_job import FileJobController
 from .hotkey import HotkeyListener
 from .overlay import Overlay
 from .state import State
@@ -25,14 +31,27 @@ class PersoWhisperApp(rumps.App):
     def __init__(self, controller: Controller) -> None:
         super().__init__(ICON_IDLE, quit_button=None)
         self._controller = controller
+        self._file_job = FileJobController()
+        self._drop_window = DropWindowController.alloc().initWithFileJob_(self._file_job)
+        self._file_job.attach_window(self._drop_window)
         self._status_item = rumps.MenuItem("Status: idle")
+        self._new_file_item = rumps.MenuItem(
+            "New transcription from file…", callback=self._on_new_file
+        )
+        self._show_window_item = rumps.MenuItem(
+            "Show window", callback=self._on_show_window
+        )
         self.menu = [
+            self._show_window_item,
+            self._new_file_item,
+            None,
             self._status_item,
             None,
             rumps.MenuItem("Quit", callback=self._quit),
         ]
         self._overlay = Overlay()
         self._last_state: Optional[State] = None
+        self._last_file_busy: Optional[bool] = None
         self._poll_timer = rumps.Timer(self._sync_ui, UI_TICK_SEC)
         self._poll_timer.start()
 
@@ -44,6 +63,15 @@ class PersoWhisperApp(rumps.App):
         new_status = f"Status: {s.value}"
         if self._status_item.title != new_status:
             self._status_item.title = new_status
+
+        # Grey out the file-import item while either flow is busy.
+        file_busy = self._file_job.is_busy() or s is State.TRANSCRIBING
+        if file_busy != self._last_file_busy:
+            self._new_file_item.set_callback(
+                None if file_busy else self._on_new_file
+            )
+            self._drop_window.update_busy(file_busy)
+            self._last_file_busy = file_busy
 
         if s is State.RECORDING:
             if self._last_state is not State.RECORDING:
@@ -59,6 +87,12 @@ class PersoWhisperApp(rumps.App):
                 self._overlay.hide()
 
         self._last_state = s
+
+    def _on_new_file(self, _sender):
+        self._file_job.start()
+
+    def _on_show_window(self, _sender):
+        self._drop_window.show()
 
     def _quit(self, _sender):
         rumps.quit_application()
@@ -87,14 +121,17 @@ def main() -> int:
     listener.start()
 
     app = PersoWhisperApp(controller)
-    # Accessory policy: no Dock icon, no Cmd+Tab entry, never steals key
-    # focus from the foreground app — so the synthetic Cmd+V at paste time
-    # lands in whatever text field the user is currently in.
+    # Regular policy: app appears in the Dock and Cmd+Tab. The drag-and-drop
+    # window is the primary surface; the menu bar icon stays as a secondary
+    # control. Dictation paste still works because right Cmd is captured by
+    # a global pynput listener — the synthetic Cmd+V lands in whichever app
+    # has focus when the user releases the hotkey.
     NSApplication.sharedApplication().setActivationPolicy_(
-        NSApplicationActivationPolicyAccessory
+        NSApplicationActivationPolicyRegular
     )
+    app._drop_window.show()
     print(
-        "PersoWhisper running. Tap right Cmd to start/stop dictation.",
+        "PersoWhisper running. Tap right Cmd to dictate, or drop a file on the window.",
         file=sys.stderr,
     )
     app.run()

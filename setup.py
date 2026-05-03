@@ -22,7 +22,7 @@ OPTIONS = {
         "CFBundleIdentifier": "com.borisploix.persowhisper",
         "CFBundleVersion": "1.0",
         "CFBundleShortVersionString": "1.0",
-        "LSUIElement": True,
+        "LSUIElement": False,
         "LSMinimumSystemVersion": "12.0",
         "NSHighResolutionCapable": True,
         "NSMicrophoneUsageDescription": "PersoWhisper records your voice to transcribe dictation.",

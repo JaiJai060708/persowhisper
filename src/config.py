@@ -29,7 +29,21 @@ MAX_RECORDING_SEC = 5 * 60
 # User-selectable at runtime via the menu bar; persisted in SETTINGS_PATH.
 AVAILABLE_MODELS: tuple[str, ...] = ("large-v3", "medium.en")
 DEFAULT_MODEL = "large-v3"
+# Forced model for the file-import flow regardless of the dictation setting.
+LARGE_MODEL = "large-v3"
 SETTINGS_PATH = Path.home() / ".persowhisper.json"
+
+
+# --- File import -------------------------------------------------------------
+
+# NSOpenPanel filter for "New transcription from file…". whisperx invokes
+# ffmpeg internally, so anything ffmpeg can decode works.
+SUPPORTED_AUDIO_EXTS: tuple[str, ...] = (
+    "mp3", "m4a", "wav", "aiff", "aif", "flac", "ogg", "opus",
+)
+SUPPORTED_VIDEO_EXTS: tuple[str, ...] = (
+    "mp4", "m4v", "mov", "mkv", "webm", "avi",
+)
 
 
 # --- Paste -------------------------------------------------------------------
