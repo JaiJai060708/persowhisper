@@ -106,19 +106,19 @@ def main() -> int:
     trusted = check_accessibility_trust(prompt=True)
     if trusted is False:
         print(
-            "\nerror: this process lacks Accessibility permission.\n\n"
+            "\nwarning: this process lacks Accessibility permission.\n\n"
             "macOS just opened (or will open) a dialog pointing at\n"
             "  System Settings → Privacy & Security → Accessibility\n"
-            "Enable the parent app you used to launch ./run.sh (Terminal,\n"
-            "iTerm2, VS Code's integrated terminal, …), then *fully quit and\n"
-            "relaunch* it before running this script again.\n",
+            "Enable PersoWhisper, then *fully quit and relaunch* it before\n"
+            "using the global right-Cmd dictation hotkey.\n",
             file=sys.stderr,
         )
-        return 1
 
     controller = Controller()
-    listener = HotkeyListener(on_tap=controller.on_tap)
-    listener.start()
+    listener: Optional[HotkeyListener] = None
+    if trusted is not False:
+        listener = HotkeyListener(on_tap=controller.on_tap)
+        listener.start()
 
     app = PersoWhisperApp(controller)
     # Regular policy: app appears in the Dock and Cmd+Tab. The drag-and-drop
@@ -130,6 +130,10 @@ def main() -> int:
         NSApplicationActivationPolicyRegular
     )
     app._drop_window.show()
+    if trusted is False:
+        app._drop_window.set_status(
+            "Enable Accessibility for PersoWhisper, then relaunch for right-Cmd dictation."
+        )
     print(
         "PersoWhisper running. Tap right Cmd to dictate, or drop a file on the window.",
         file=sys.stderr,
