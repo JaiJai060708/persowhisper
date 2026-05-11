@@ -89,6 +89,7 @@ A `🎙` icon appears in the menu bar. While the script is running:
 | Tap right Cmd (idle) | Start recording. Icon → 🔴, *Tink* sound. |
 | Tap right Cmd (recording) | Stop recording. Icon → ⏳, *Pop* sound. whisperx runs (~10–30 s for short clips on `large-v3`), then the transcript pastes into the focused field. *Glass* sound when done; icon back to 🎙. |
 | Tap right Cmd (transcribing) | Ignored. *Funk* sound. |
+| Press Escape (right-Cmd recording/transcribing) | Cancel dictation. Recording audio is discarded; active whisperx transcription is stopped before paste. |
 | Hold right Cmd / use Cmd+something | Untouched. The hotkey only fires on a clean tap < 800 ms with no other key in between. |
 | Menu bar → Quit | Clean exit. |
 
@@ -110,12 +111,21 @@ The configurable knobs live as module-level constants near the top of
 
 - **No icon in the menu bar** — `rumps` failed; check the terminal output.
 - **Tap doesn't trigger anything** — usually missing Accessibility / Input
-  Monitoring permission for the parent terminal app. Re-grant and relaunch.
-- **Recording starts but transcript never pastes** — check terminal stderr
-  for the whisperx command and its error tail. On failure the WAV is kept
-  and its path printed for replay.
+  Monitoring permission for PersoWhisper (or for the parent terminal app when
+  running with `./run.sh`). Re-grant and relaunch.
+- **Settings says Accessibility is enabled, but the log still says this
+  process lacks permission** — remove the old PersoWhisper entry from
+  Accessibility, run `./build_app.sh`, add `/Applications/PersoWhisper.app`
+  again, then relaunch. Older builds were ad-hoc signed, so rebuilds could
+  leave System Settings showing a stale enabled entry for a previous cdhash.
+- **Recording starts but transcript never pastes** — if the log says
+  `osascript is not allowed to send keystrokes` or `Quartz Cmd+V fallback
+  unavailable`, enable Accessibility for PersoWhisper (or the terminal app
+  launching it) and allow the System Events automation prompt, then fully quit
+  and relaunch. Otherwise, check terminal stderr for the whisperx command and
+  its error tail.
 - **Wrong app receives the paste** — make sure the cursor is in a text
-  field before tapping right Cmd to *stop* recording; focus is captured at
-  paste time, not at start time.
+  field before tapping right Cmd to *start* recording; the paste target is
+  captured at start time.
 - **Pasting fails silently** — your previous Cmd is still being held by
   pynput from the start tap (rare). Wait a beat and try again.

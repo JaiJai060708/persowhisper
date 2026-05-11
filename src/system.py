@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import subprocess
+import sys
+from pathlib import Path
 from typing import Optional
 
 
@@ -58,3 +60,49 @@ def check_accessibility_trust(prompt: bool = True) -> Optional[bool]:
             return None
     options = {kAXTrustedCheckOptionPrompt: bool(prompt)}
     return bool(AXIsProcessTrustedWithOptions(options))
+
+
+def accessibility_identity_summary() -> str:
+    """Describe the process identity macOS uses for Accessibility decisions."""
+    parts = [
+        f"executable={sys.executable}",
+    ]
+    try:
+        parts.append(f"resolved_executable={Path(sys.executable).resolve()}")
+    except Exception:
+        pass
+
+    code_target = sys.executable
+    try:
+        from AppKit import NSBundle
+
+        bundle = NSBundle.mainBundle()
+        bundle_id = bundle.bundleIdentifier()
+        bundle_path = bundle.bundlePath()
+        if bundle_id:
+            parts.append(f"bundle_id={bundle_id}")
+        if bundle_path:
+            code_target = str(bundle_path)
+            parts.append(f"bundle_path={bundle_path}")
+    except Exception:
+        pass
+
+    try:
+        proc = subprocess.run(
+            ["codesign", "-d", "-r-", code_target],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        output = "\n".join(
+            line.strip()
+            for line in (proc.stdout + proc.stderr).splitlines()
+            if line.strip().startswith("designated =>")
+            or line.strip().startswith("# designated =>")
+        )
+        if output:
+            parts.append(output.replace("\n", " "))
+    except Exception:
+        pass
+
+    return "; ".join(parts)

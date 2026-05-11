@@ -6,18 +6,21 @@ in-memory copy for AppKit views to observe.
 
 from __future__ import annotations
 
+from pathlib import Path
 import sys
 import threading
 from typing import Callable, TextIO
 
 
 MAX_LOG_CHARS = 120_000
+LOG_PATH = Path.home() / "Library" / "Logs" / "PersoWhisper.log"
 
 _lock = threading.RLock()
 _chunks: list[str] = []
 _chunk_len = 0
 _listeners: list[Callable[[str], None]] = []
 _installed = False
+_log_file: TextIO | None = None
 
 
 def _append(text: str) -> None:
@@ -37,6 +40,13 @@ def _append(text: str) -> None:
                 _chunks[0] = first[overflow:]
                 _chunk_len -= overflow
         listeners = list(_listeners)
+        log_file = _log_file
+        if log_file is not None:
+            try:
+                log_file.write(text)
+                log_file.flush()
+            except Exception:
+                pass
     for listener in listeners:
         try:
             listener(text)
@@ -80,10 +90,17 @@ class _TeeStream:
 
 
 def install_stdio_bridge() -> None:
-    global _installed
+    global _installed, _log_file
     with _lock:
         if _installed:
             return
+        try:
+            LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _log_file = LOG_PATH.open("a", buffering=1, encoding="utf-8")
+            _log_file.write("\n--- PersoWhisper log started ---\n")
+            _log_file.flush()
+        except Exception:
+            _log_file = None
         sys.stdout = _TeeStream(sys.stdout)  # type: ignore[assignment]
         sys.stderr = _TeeStream(sys.stderr)  # type: ignore[assignment]
         _installed = True

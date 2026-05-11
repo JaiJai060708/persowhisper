@@ -21,13 +21,16 @@ class Recorder:
         self._chunks: list[np.ndarray] = []
         self._stream: Optional[sd.InputStream] = None
         self._started_at: Optional[float] = None
+        self._stream_lock = threading.Lock()
+        self._chunks_lock = threading.Lock()
         self._level_lock = threading.Lock()
         self._latest_level = 0.0
 
     def _callback(self, indata, frames, time_info, status):
         if status:
             print(f"[recorder] sounddevice status: {status}", file=sys.stderr)
-        self._chunks.append(indata.copy())
+        with self._chunks_lock:
+            self._chunks.append(indata.copy())
         if indata.size:
             chunk = indata.astype(np.float32) / 32768.0
             rms = float(np.sqrt(np.mean(chunk * chunk)))
@@ -41,32 +44,40 @@ class Recorder:
             return self._latest_level
 
     def start(self) -> None:
-        self._chunks = []
-        with self._level_lock:
-            self._latest_level = 0.0
-        self._started_at = time.monotonic()
-        self._stream = sd.InputStream(
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype="int16",
-            callback=self._callback,
-        )
-        self._stream.start()
+        with self._stream_lock:
+            with self._chunks_lock:
+                self._chunks = []
+            with self._level_lock:
+                self._latest_level = 0.0
+            self._started_at = time.monotonic()
+            self._stream = sd.InputStream(
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                dtype="int16",
+                callback=self._callback,
+            )
+            self._stream.start()
 
     def stop(self) -> tuple[Optional[Path], float]:
-        if self._stream is None:
-            return None, 0.0
-        try:
-            self._stream.stop()
-            self._stream.close()
-        finally:
-            self._stream = None
+        with self._stream_lock:
+            if self._stream is None:
+                return None, 0.0
+            started_at = self._started_at
+            try:
+                self._stream.stop()
+                self._stream.close()
+            finally:
+                self._stream = None
+                self._started_at = None
 
-        duration = time.monotonic() - (self._started_at or time.monotonic())
-        if not self._chunks:
+        duration = time.monotonic() - (started_at or time.monotonic())
+        with self._chunks_lock:
+            chunks = self._chunks
+            self._chunks = []
+        if not chunks:
             return None, duration
 
-        audio = np.concatenate(self._chunks, axis=0)
+        audio = np.concatenate(chunks, axis=0)
         if audio.shape[0] == 0:
             return None, duration
 
@@ -77,3 +88,18 @@ class Recorder:
         path = Path(tmp.name)
         sf.write(str(path), audio, SAMPLE_RATE, subtype="PCM_16")
         return path, duration
+
+    def cancel(self) -> None:
+        with self._stream_lock:
+            if self._stream is not None:
+                try:
+                    self._stream.stop()
+                    self._stream.close()
+                finally:
+                    self._stream = None
+            self._started_at = None
+
+        with self._chunks_lock:
+            self._chunks = []
+        with self._level_lock:
+            self._latest_level = 0.0

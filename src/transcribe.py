@@ -54,6 +54,7 @@ _SEG_RE = re.compile(
     rf"(?P<end>{_TS_RE})\]\s*(?P<text>.+)",
     re.IGNORECASE,
 )
+_TORCHCODEC_WARNING_FILTER = "ignore::UserWarning:pyannote.audio.core.io"
 
 
 def _parse_ts(ts: str) -> float:
@@ -109,6 +110,18 @@ def transcribe_file(
             "(accept the model terms on huggingface.co)."
         )
 
+    def _is_cancelled() -> bool:
+        if cancel_requested is None:
+            return False
+        try:
+            return bool(cancel_requested())
+        except Exception as exc:
+            print(f"[transcribe] cancel_requested raised: {exc}", file=sys.stderr)
+            return False
+
+    if _is_cancelled():
+        raise TranscriptionCancelled("Transcription cancelled.")
+
     clean_stale_locks()
     out_dir = audio_path.parent
     cmd: list[str] = [
@@ -129,6 +142,28 @@ def transcribe_file(
         cmd += ["--no_align"]
 
     env = os.environ.copy()
+    path_parts = [
+        str(WHISPERX_BIN.parent),
+        "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ]
+    existing_path = env.get("PATH")
+    if existing_path:
+        path_parts.append(existing_path)
+    env["PATH"] = ":".join(dict.fromkeys(path_parts))
+    dyld_parts = [
+        "/opt/homebrew/lib",
+        "/usr/local/lib",
+    ]
+    existing_dyld = env.get("DYLD_LIBRARY_PATH")
+    if existing_dyld:
+        dyld_parts.append(existing_dyld)
+    env["DYLD_LIBRARY_PATH"] = ":".join(dict.fromkeys(dyld_parts))
     env.setdefault("PYTHONUNBUFFERED", "1")
     env.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "0")
     env.setdefault("HF_HUB_VERBOSITY", "info")
@@ -137,6 +172,18 @@ def transcribe_file(
     env.setdefault("OTEL_TRACES_EXPORTER", "none")
     env.setdefault("OTEL_METRICS_EXPORTER", "none")
     env.setdefault("OTEL_LOGS_EXPORTER", "none")
+    existing_warnings = env.get("PYTHONWARNINGS")
+    if existing_warnings:
+        warning_filters = [
+            item.strip()
+            for item in existing_warnings.split(",")
+            if item.strip()
+        ]
+        if _TORCHCODEC_WARNING_FILTER not in warning_filters:
+            warning_filters.insert(0, _TORCHCODEC_WARNING_FILTER)
+        env["PYTHONWARNINGS"] = ",".join(warning_filters)
+    else:
+        env["PYTHONWARNINGS"] = _TORCHCODEC_WARNING_FILTER
 
     log_cmd = [
         ("<hf_token>" if (i > 0 and cmd[i - 1] == "--hf_token") else c)
@@ -163,15 +210,7 @@ def transcribe_file(
 
     saw_first_segment = False
     cancelled = False
-
-    def _is_cancelled() -> bool:
-        if cancel_requested is None:
-            return False
-        try:
-            return bool(cancel_requested())
-        except Exception as exc:
-            print(f"[transcribe] cancel_requested raised: {exc}", file=sys.stderr)
-            return False
+    recent_output: list[str] = []
 
     def _signal_process(sig: int) -> None:
         if proc.poll() is not None:
@@ -194,6 +233,8 @@ def transcribe_file(
         assert proc.stdout is not None
         for raw in proc.stdout:
             line = raw.rstrip("\n")
+            recent_output.append(line)
+            del recent_output[:-40]
             # Mirror to our own stderr so the launching terminal still shows
             # whisperx's output (downloads, VAD progress, errors).
             print(line, file=sys.stderr)
@@ -221,7 +262,7 @@ def transcribe_file(
                 on_status("Stopping…")
             _signal_process(signal.SIGTERM)
             try:
-                rc = proc.wait(timeout=5.0)
+                rc = proc.wait(timeout=0.5)
             except subprocess.TimeoutExpired:
                 print("[transcribe] process did not exit; killing", file=sys.stderr)
                 _signal_process(signal.SIGKILL)
@@ -246,9 +287,12 @@ def transcribe_file(
     if cancelled or _is_cancelled():
         raise TranscriptionCancelled("Transcription cancelled.")
     if rc != 0:
+        tail = "\n".join(recent_output[-12:]).strip()
+        if tail:
+            tail = f"\n\nLast whisperx output:\n{tail}"
         raise RuntimeError(
             f"whisperx exited {rc} after {elapsed:.1f}s "
-            f"(see this terminal for whisperx output)"
+            f"(see ~/Library/Logs/PersoWhisper.log for full output){tail}"
         )
 
     if diarize and on_status is not None:
@@ -286,13 +330,18 @@ def transcribe_file(
     return segments
 
 
-def transcribe(wav_path: Path) -> str:
+def transcribe(
+    wav_path: Path,
+    *,
+    cancel_requested: Optional[Callable[[], bool]] = None,
+) -> str:
     segments = transcribe_file(
         wav_path,
         model=SETTINGS.model,
         diarize=False,
         hf_token=None,
         language="en",
+        cancel_requested=cancel_requested,
     )
     text = " ".join(s.text for s in segments).strip()
     return " ".join(text.split())

@@ -48,7 +48,7 @@ SUPPORTED_VIDEO_EXTS: tuple[str, ...] = (
 
 # --- Paste -------------------------------------------------------------------
 
-PASTE_RESTORE_DELAY_SEC = 0.4
+PASTE_RESTORE_DELAY_SEC = 1.5
 
 
 # --- Menu bar icons ----------------------------------------------------------

@@ -37,6 +37,33 @@ fi
 rm -rf build dist
 "$PYTHON" setup.py py2app -A 2>&1 | tail -10
 
+# --- Stable code signature ---------------------------------------------------
+# Accessibility grants are tied to the app's designated code requirement. A
+# py2app ad-hoc signature uses only a cdhash, so every rebuild can invalidate
+# the grant while System Settings still shows a stale enabled entry.
+SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-}"
+if [[ -z "$SIGN_IDENTITY" ]]; then
+  SIGN_IDENTITY="$(
+    security find-identity -v -p codesigning 2>/dev/null \
+      | sed -nE 's/^[[:space:]]*[0-9]+\) [A-F0-9]+ "([^"]+)".*/\1/p' \
+      | grep -m1 '^Apple Development:' || true
+  )"
+fi
+if [[ -z "$SIGN_IDENTITY" ]]; then
+  SIGN_IDENTITY="$(
+    security find-identity -v -p codesigning 2>/dev/null \
+      | sed -nE 's/^[[:space:]]*[0-9]+\) [A-F0-9]+ "([^"]+)".*/\1/p' \
+      | head -1 || true
+  )"
+fi
+
+if [[ -n "$SIGN_IDENTITY" ]]; then
+  codesign --force --deep --sign "$SIGN_IDENTITY" "$DIST_APP"
+  echo "OK: signed with $SIGN_IDENTITY"
+else
+  echo "warn: no code-signing identity found; Accessibility may need re-granting after every rebuild."
+fi
+
 # --- /Applications symlink ---------------------------------------------------
 if ln -sfn "$DIST_APP" "$LINK" 2>/dev/null; then
   echo "OK: symlinked $LINK -> $DIST_APP"
@@ -53,6 +80,7 @@ OK: built $DIST_APP
 
 Next steps:
   1. System Settings -> Privacy & Security -> Accessibility:
-     click +, add /Applications/PersoWhisper.app, enable it.
+     if PersoWhisper is already listed from an older build, remove it first.
+     Then click +, add /Applications/PersoWhisper.app, and enable it.
   2. Launch from Finder, Spotlight, or:  open -a PersoWhisper
 EOF

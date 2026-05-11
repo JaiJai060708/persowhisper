@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -20,11 +21,14 @@ from .config import (
     SOUND_START,
     SOUND_STOP,
 )
-from .paste import paste
+from .paste import PasteTarget, capture_paste_target, paste
 from .recorder import Recorder
 from .state import State
 from .system import notify, play
-from .transcribe import transcribe
+from .transcribe import TranscriptionCancelled, transcribe
+
+
+DUPLICATE_TAP_SUPPRESS_SEC = 0.12
 
 
 class Controller:
@@ -32,11 +36,18 @@ class Controller:
         self._lock = threading.Lock()
         self._state = State.IDLE
         self._recorder = Recorder()
+        self._cancel_event: Optional[threading.Event] = None
+        self._paste_target: Optional[PasteTarget] = None
+        self._last_tap_at = 0.0
 
     @property
     def state(self) -> State:
         with self._lock:
             return self._state
+
+    def can_cancel(self) -> bool:
+        with self._lock:
+            return self._state in (State.RECORDING, State.TRANSCRIBING)
 
     def latest_level(self) -> float:
         return self._recorder.latest_level()
@@ -44,9 +55,23 @@ class Controller:
     def _set_state(self, new: State) -> None:
         with self._lock:
             self._state = new
+            if new is State.IDLE:
+                self._cancel_event = None
+                self._paste_target = None
+
+    def _finish_transcription(self, cancel_event: threading.Event) -> None:
+        with self._lock:
+            if self._cancel_event is cancel_event:
+                self._state = State.IDLE
+                self._cancel_event = None
+                self._paste_target = None
 
     def on_tap(self) -> None:
+        now = time.monotonic()
         with self._lock:
+            if now - self._last_tap_at < DUPLICATE_TAP_SUPPRESS_SEC:
+                return
+            self._last_tap_at = now
             current = self._state
 
         if current is State.IDLE:
@@ -57,6 +82,7 @@ class Controller:
             play(SOUND_BUSY)
 
     def _start_recording(self) -> None:
+        paste_target = capture_paste_target()
         try:
             self._recorder.start()
         except Exception as exc:
@@ -64,19 +90,73 @@ class Controller:
             play(SOUND_ERR)
             notify("PersoWhisper — mic error", str(exc))
             return
-        self._set_state(State.RECORDING)
+        with self._lock:
+            self._state = State.RECORDING
+            self._paste_target = paste_target
         play(SOUND_START)
 
     def _stop_recording_and_transcribe(self) -> None:
-        self._set_state(State.TRANSCRIBING)
+        cancel_event = threading.Event()
+        with self._lock:
+            if self._state is not State.RECORDING:
+                return
+            self._state = State.TRANSCRIBING
+            self._cancel_event = cancel_event
+            paste_target = self._paste_target
         play(SOUND_STOP)
-        threading.Thread(target=self._transcribe_worker, daemon=True).start()
+        threading.Thread(
+            target=self._transcribe_worker,
+            args=(cancel_event, paste_target),
+            daemon=True,
+        ).start()
 
-    def _transcribe_worker(self) -> None:
+    def cancel(self) -> None:
+        cancel_recording = False
+        signal_transcription = False
+        cancel_event: Optional[threading.Event] = None
+
+        with self._lock:
+            current = self._state
+            if current is State.RECORDING:
+                self._state = State.IDLE
+                self._cancel_event = None
+                self._paste_target = None
+                cancel_recording = True
+            elif current is State.TRANSCRIBING:
+                cancel_event = self._cancel_event
+                if cancel_event is not None:
+                    cancel_event.set()
+                self._state = State.IDLE
+                self._cancel_event = None
+                self._paste_target = None
+                signal_transcription = True
+            else:
+                return
+
+        if cancel_recording:
+            print("[controller] recording cancelled", file=sys.stderr)
+            self._recorder.cancel()
+            play(SOUND_STOP)
+        elif signal_transcription:
+            print("[controller] transcription cancellation requested", file=sys.stderr)
+            self._recorder.cancel()
+            play(SOUND_STOP)
+
+    def _transcribe_worker(
+        self,
+        cancel_event: threading.Event,
+        paste_target: Optional[PasteTarget],
+    ) -> None:
         wav_path: Optional[Path] = None
         keep_wav = False
         try:
             wav_path, duration = self._recorder.stop()
+            if cancel_event.is_set():
+                print(
+                    "[controller] transcription cancelled before whisperx",
+                    file=sys.stderr,
+                )
+                return
             if wav_path is None or duration < MIN_RECORDING_SEC:
                 print(
                     f"[controller] recording too short ({duration:.2f}s), skipping",
@@ -85,15 +165,36 @@ class Controller:
                 play(SOUND_BUSY)
                 return
 
-            text = transcribe(wav_path)
+            text = transcribe(wav_path, cancel_requested=cancel_event.is_set)
+            if cancel_event.is_set():
+                print(
+                    "[controller] transcription cancelled before paste",
+                    file=sys.stderr,
+                )
+                return
             if not text:
                 print("[controller] transcript was empty", file=sys.stderr)
                 play(SOUND_ERR)
                 return
 
             print(f"[controller] transcript: {text!r}", file=sys.stderr)
-            paste(text)
-            play(SOUND_DONE)
+            self._finish_transcription(cancel_event)
+            if paste(
+                text,
+                cancel_requested=cancel_event.is_set,
+                target=paste_target,
+            ):
+                play(SOUND_DONE)
+            else:
+                print("[controller] paste cancelled or failed", file=sys.stderr)
+                play(SOUND_ERR)
+                notify(
+                    "PersoWhisper — paste failed",
+                    "Enable Accessibility for PersoWhisper/launcher and "
+                    "System Events automation, then relaunch.",
+                )
+        except TranscriptionCancelled as exc:
+            print(f"[controller] transcribe cancelled: {exc}", file=sys.stderr)
         except Exception as exc:
             print(f"[controller] transcribe failed: {exc}", file=sys.stderr)
             play(SOUND_ERR)
@@ -110,4 +211,4 @@ class Controller:
                     wav_path.unlink()
                 except Exception:
                     pass
-            self._set_state(State.IDLE)
+            self._finish_transcription(cancel_event)
