@@ -25,7 +25,7 @@ class Settings:
 
     def _load(self) -> None:
         try:
-            raw = SETTINGS_PATH.read_text()
+            raw = SETTINGS_PATH.read_text(encoding="utf-8")
         except FileNotFoundError:
             return
         except Exception as exc:
@@ -48,7 +48,7 @@ class Settings:
         if self._hf_token_file:
             payload["hf_token"] = self._hf_token_file
         try:
-            SETTINGS_PATH.write_text(json.dumps(payload, indent=2))
+            SETTINGS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         except Exception as exc:
             print(f"[settings] failed to save {SETTINGS_PATH}: {exc}", file=sys.stderr)
 

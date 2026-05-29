@@ -306,7 +306,7 @@ def transcribe_file(
     if not json_path.exists():
         raise RuntimeError(f"whisperx json output missing: {json_path}")
 
-    data = json.loads(json_path.read_text())
+    data = json.loads(json_path.read_text(encoding="utf-8"))
     raw_segments = data.get("segments", [])
     segments: list[Segment] = []
     for seg in raw_segments:
