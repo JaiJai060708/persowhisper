@@ -165,6 +165,7 @@ def transcribe_file(
         dyld_parts.append(existing_dyld)
     env["DYLD_LIBRARY_PATH"] = ":".join(dict.fromkeys(dyld_parts))
     env.setdefault("PYTHONUNBUFFERED", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "0")
     env.setdefault("HF_HUB_VERBOSITY", "info")
     env.setdefault("TRANSFORMERS_VERBOSITY", "info")
@@ -205,6 +206,8 @@ def transcribe_file(
         stderr=subprocess.STDOUT,
         bufsize=1,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         start_new_session=True,
     )
 
