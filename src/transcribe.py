@@ -54,7 +54,10 @@ _SEG_RE = re.compile(
     rf"(?P<end>{_TS_RE})\]\s*(?P<text>.+)",
     re.IGNORECASE,
 )
-_TORCHCODEC_WARNING_FILTER = "ignore::UserWarning:pyannote.audio.core.io"
+_PYANNOTE_WARNING_FILTERS = (
+    "ignore::UserWarning:pyannote.audio.core.io",
+    "ignore::UserWarning:pyannote.audio.models.blocks.pooling",
+)
 
 
 def _parse_ts(ts: str) -> float:
@@ -174,17 +177,15 @@ def transcribe_file(
     env.setdefault("OTEL_METRICS_EXPORTER", "none")
     env.setdefault("OTEL_LOGS_EXPORTER", "none")
     existing_warnings = env.get("PYTHONWARNINGS")
-    if existing_warnings:
-        warning_filters = [
-            item.strip()
-            for item in existing_warnings.split(",")
-            if item.strip()
-        ]
-        if _TORCHCODEC_WARNING_FILTER not in warning_filters:
-            warning_filters.insert(0, _TORCHCODEC_WARNING_FILTER)
-        env["PYTHONWARNINGS"] = ",".join(warning_filters)
-    else:
-        env["PYTHONWARNINGS"] = _TORCHCODEC_WARNING_FILTER
+    warning_filters = [
+        item.strip()
+        for item in (existing_warnings or "").split(",")
+        if item.strip()
+    ]
+    for filt in reversed(_PYANNOTE_WARNING_FILTERS):
+        if filt not in warning_filters:
+            warning_filters.insert(0, filt)
+    env["PYTHONWARNINGS"] = ",".join(warning_filters)
 
     log_cmd = [
         ("<hf_token>" if (i > 0 and cmd[i - 1] == "--hf_token") else c)
