@@ -128,6 +128,7 @@ class _Engine:
         self,
         wav_path: Path,
         *,
+        duration: Optional[float] = None,
         cancel_requested: Optional[Callable[[], bool]] = None,
         on_progress: Optional[Callable[[float], None]] = None,
     ) -> list[Segment]:
@@ -155,24 +156,61 @@ class _Engine:
             audio = audio.mean(axis=1)
         audio = np.ascontiguousarray(audio, dtype=np.float32)
 
+        def report(frac: float) -> None:
+            if on_progress is None:
+                return
+            frac = 0.0 if frac < 0.0 else 1.0 if frac > 1.0 else frac
+            try:
+                on_progress(frac)
+            except Exception as exc:
+                print(f"[engine] on_progress raised: {exc}", file=sys.stderr)
+
+        # whisperx's progress_callback only fires once per ~30 s VAD chunk, so a
+        # typical (sub-30 s) dictation is a single chunk and we'd get just one
+        # callback — at the very end. The bar would sit at 0 % then snap to done.
+        # To give a smoothly advancing bar we estimate progress from elapsed
+        # wall-clock against a rough transcription-time estimate, and let
+        # whisperx's real per-chunk callback push it ahead on longer clips.
+        t0 = time.monotonic()
+        real_fraction = 0.0
+        # CPU large-v3 (int8) runs faster than real time but with fixed per-call
+        # overhead (VAD, tokenizer); this only needs to be in the right ballpark.
+        est_total = max(1.5, 0.7 * duration) if duration and duration > 0 else None
+
+        def estimated() -> float:
+            if est_total is None:
+                return real_fraction
+            return min(0.95, (time.monotonic() - t0) / est_total)
+
         def progress_cb(percent: float) -> None:
             # Raising here aborts the batch loop promptly between VAD chunks.
             if cancelled():
                 raise TranscriptionCancelled("Transcription cancelled.")
-            if on_progress is not None:
-                frac = percent / 100.0
-                frac = 0.0 if frac < 0.0 else 1.0 if frac > 1.0 else frac
-                try:
-                    on_progress(frac)
-                except Exception as exc:
-                    print(f"[engine] on_progress raised: {exc}", file=sys.stderr)
+            nonlocal real_fraction
+            frac = percent / 100.0
+            if frac > real_fraction:
+                real_fraction = frac
+            report(max(real_fraction, estimated()))
 
-        # Model is ready — flip the overlay from the indeterminate "Loading…"
-        # state to "Transcribing… 0%" now, since a short clip is a single VAD
-        # chunk and would otherwise only report progress once, at the very end.
-        progress_cb(0.0)
+        # Flip the overlay from the indeterminate "Loading…" state to
+        # "Transcribing… 0%" now that the model is ready.
+        report(0.0)
 
-        t0 = time.monotonic()
+        stop_ticker = threading.Event()
+
+        def ticker() -> None:
+            while not stop_ticker.wait(0.1):
+                if cancelled():
+                    return
+                report(max(real_fraction, estimated()))
+
+        tick_thread: Optional[threading.Thread] = None
+        if on_progress is not None and est_total is not None:
+            tick_thread = threading.Thread(
+                target=ticker, daemon=True, name="whisperx-progress"
+            )
+            tick_thread.start()
+
         try:
             with self._infer_lock:
                 result = model.transcribe(
@@ -186,6 +224,14 @@ class _Engine:
             raise
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"whisperx transcription failed: {exc}") from exc
+        finally:
+            stop_ticker.set()
+            if tick_thread is not None:
+                tick_thread.join(timeout=0.5)
+
+        # Inference finished — fill the bar even if the (coarse) callback never
+        # reached 100 %, so the overlay shows complete before the paste lands.
+        report(1.0)
 
         if cancelled():
             raise TranscriptionCancelled("Transcription cancelled.")
@@ -217,13 +263,14 @@ ENGINE = _Engine()
 def transcribe(
     wav_path: Path,
     *,
-    duration: Optional[float] = None,  # accepted for call-site compatibility
+    duration: Optional[float] = None,
     cancel_requested: Optional[Callable[[], bool]] = None,
     on_progress: Optional[Callable[[float], None]] = None,
 ) -> str:
     """Dictation entry point: warm-model transcription returning joined text."""
     segments = ENGINE.transcribe_segments(
         wav_path,
+        duration=duration,
         cancel_requested=cancel_requested,
         on_progress=on_progress,
     )

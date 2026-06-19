@@ -42,7 +42,6 @@ class Controller:
         self._last_tap_at = 0.0
         # Transcription progress, read by the UI loop. `_fraction` is None until
         # the first segment arrives (the model-load / VAD phase has no progress).
-        self._transcribe_started_at: Optional[float] = None
         self._transcribe_fraction: Optional[float] = None
 
     @property
@@ -63,7 +62,6 @@ class Controller:
             if new is State.IDLE:
                 self._cancel_event = None
                 self._paste_target = None
-                self._transcribe_started_at = None
                 self._transcribe_fraction = None
 
     def _finish_transcription(self, cancel_event: threading.Event) -> None:
@@ -72,7 +70,6 @@ class Controller:
                 self._state = State.IDLE
                 self._cancel_event = None
                 self._paste_target = None
-                self._transcribe_started_at = None
                 self._transcribe_fraction = None
 
     def _report_progress(self, fraction: float) -> None:
@@ -80,14 +77,11 @@ class Controller:
             if self._state is State.TRANSCRIBING:
                 self._transcribe_fraction = fraction
 
-    def transcribe_view(self) -> tuple[Optional[float], float]:
-        """(fraction, elapsed_seconds) for the overlay. `fraction` is None
-        during the model-load / VAD phase, then 0.0–1.0 once words stream in."""
+    def transcribe_view(self) -> Optional[float]:
+        """Progress fraction for the overlay. None during the model-load / VAD
+        phase, then 0.0–1.0 once transcription is under way."""
         with self._lock:
-            started = self._transcribe_started_at
-            fraction = self._transcribe_fraction
-        elapsed = (time.monotonic() - started) if started is not None else 0.0
-        return fraction, elapsed
+            return self._transcribe_fraction
 
     def on_tap(self) -> None:
         now = time.monotonic()
@@ -128,7 +122,6 @@ class Controller:
                 return
             self._state = State.TRANSCRIBING
             self._cancel_event = cancel_event
-            self._transcribe_started_at = time.monotonic()
             self._transcribe_fraction = None
             paste_target = self._paste_target
         play(SOUND_STOP)
@@ -157,7 +150,6 @@ class Controller:
                 self._state = State.IDLE
                 self._cancel_event = None
                 self._paste_target = None
-                self._transcribe_started_at = None
                 self._transcribe_fraction = None
                 signal_transcription = True
             else:
