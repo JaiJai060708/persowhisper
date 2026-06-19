@@ -87,7 +87,7 @@ A `🎙` icon appears in the menu bar. While the script is running:
 | Action | Effect |
 |---|---|
 | Tap right Cmd (idle) | Start recording. Icon → 🔴, *Tink* sound. |
-| Tap right Cmd (recording) | Stop recording. Icon → ⏳, *Pop* sound. whisperx runs (~10–30 s for short clips on `large-v3`), then the transcript pastes into the focused field. *Glass* sound when done; icon back to 🎙. |
+| Tap right Cmd (recording) | Stop recording. Icon → ⏳, *Pop* sound. whisperx runs (~10–30 s for short clips on `large-v3`) — the overlay shows a *Loading…* sweep while the model loads, then a progress bar (% of audio transcribed) with an elapsed timer. The transcript then pastes into the focused field. *Glass* sound when done; icon back to 🎙. |
 | Tap right Cmd (transcribing) | Ignored. *Funk* sound. |
 | Press Escape (right-Cmd recording/transcribing) | Cancel dictation. Recording audio is discarded; active whisperx transcription is stopped before paste. |
 | Hold right Cmd / use Cmd+something | Untouched. The hotkey only fires on a clean tap < 800 ms with no other key in between. |

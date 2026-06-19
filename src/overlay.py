@@ -1,4 +1,4 @@
-"""Native AppKit floating panel that shows a live waveform / progress shimmer."""
+"""Native AppKit floating panel that shows a live waveform / transcription progress."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from AppKit import (
     NSColor,
     NSFont,
     NSFontAttributeName,
+    NSFontWeightRegular,
     NSFontWeightSemibold,
     NSForegroundColorAttributeName,
     NSGraphicsContext,
@@ -42,13 +43,17 @@ _INK = (0.030, 0.035, 0.045)
 _INK_2 = (0.075, 0.088, 0.105)
 _TEAL = (0.000, 0.760, 0.720)
 _CORAL = (1.000, 0.380, 0.250)
-_GOLD = (1.000, 0.720, 0.240)
 _TEXT = (0.940, 0.960, 0.965)
 
 
 def _srgb(rgb, alpha=1.0):
     r, g, b = rgb
     return NSColor.colorWithSRGBRed_green_blue_alpha_(r, g, b, alpha)
+
+
+def _format_elapsed(seconds) -> str:
+    s = int(seconds) if seconds and seconds > 0 else 0
+    return f"{s // 60}:{s % 60:02d}"
 
 
 class WaveView(NSView):
@@ -61,6 +66,8 @@ class WaveView(NSView):
         self._levels = collections.deque(maxlen=WAVE_HISTORY)
         self._mode = "recording"
         self._phase = 0.0
+        self._fraction = None  # None = indeterminate (model loading / VAD)
+        self._elapsed = 0.0
         return self
 
     def setMode_(self, mode):
@@ -68,7 +75,15 @@ class WaveView(NSView):
             self._mode = mode
             if mode != "recording":
                 self._levels.clear()
+                self._fraction = None
+                self._elapsed = 0.0
         self.setNeedsDisplay_(True)
+
+    @objc.python_method
+    def update_progress(self, fraction, elapsed):
+        # Stored for the next drawRect_; the caller ticks immediately after.
+        self._fraction = fraction
+        self._elapsed = elapsed
 
     def pushLevel_(self, level):
         v = level * LEVEL_GAIN
@@ -124,7 +139,8 @@ class WaveView(NSView):
             title_color = _srgb(_CORAL)
             status_color = _srgb(_CORAL)
         else:
-            title = "Transcribing…"
+            # No fraction yet → the model is still loading / running VAD.
+            title = "Loading…" if self._fraction is None else "Transcribing…"
             title_color = _srgb(_TEXT)
             status_color = _srgb(_TEAL)
 
@@ -150,7 +166,7 @@ class WaveView(NSView):
         if self._mode == "recording":
             self._drawWaveform_(wave_rect)
         else:
-            self._drawShimmer_(wave_rect)
+            self._drawProgress(bounds, wave_rect)
 
     def _drawWaveform_(self, rect):
         bar_w = 3.0
@@ -173,25 +189,82 @@ class WaveView(NSView):
             ).fill()
             x += slot
 
-    def _drawShimmer_(self, rect):
-        bar_w = 3.0
-        gap = 2.0
-        slot = bar_w + gap
-        n = max(1, int(rect.size.width // slot))
-        x0 = rect.origin.x + (rect.size.width - n * slot) / 2.0
+    @objc.python_method
+    def _drawProgress(self, bounds, rect):
+        """A progress bar (% of audio transcribed) plus an elapsed timer. While
+        the model loads (no fraction yet) the bar sweeps as an indeterminate."""
+        digit_font = NSFont.monospacedDigitSystemFontOfSize_weight_(
+            11.0, NSFontWeightRegular
+        )
+
+        # Elapsed timer, right-aligned in the title row.
+        ns_timer = NSString.stringWithString_(_format_elapsed(self._elapsed))
+        timer_attrs = {
+            NSFontAttributeName: digit_font,
+            NSForegroundColorAttributeName: _srgb(_TEXT, 0.66),
+        }
+        tw = float(ns_timer.sizeWithAttributes_(timer_attrs).width)
+        ns_timer.drawAtPoint_withAttributes_(
+            (bounds.size.width - 16.0 - tw, bounds.size.height - 23.0), timer_attrs
+        )
+
+        # Progress track, leaving room for the percentage on the right.
+        pct_w = 42.0
+        gap = 10.0
+        track_h = 7.0
+        track_x = rect.origin.x
+        track_w = rect.size.width - pct_w - gap
         cy = rect.origin.y + rect.size.height / 2.0
-        for i in range(n):
-            t = i / max(1, n - 1)
-            mag = 0.45 + 0.45 * (math.sin(self._phase + t * math.pi * 2.0) * 0.5 + 0.5)
-            h = 2.0 + mag * (rect.size.height - 2.0)
-            alpha = 0.35 + 0.55 * (
-                math.sin(self._phase * 0.6 + t * math.pi * 1.5) * 0.5 + 0.5
+        track_path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+            NSMakeRect(track_x, cy - track_h / 2.0, track_w, track_h),
+            track_h / 2.0,
+            track_h / 2.0,
+        )
+        _srgb((1.0, 1.0, 1.0), 0.10).setFill()
+        track_path.fill()
+
+        if self._fraction is None:
+            # Indeterminate sweep during model load / VAD.
+            NSGraphicsContext.saveGraphicsState()
+            track_path.addClip()
+            seg_w = track_w * 0.34
+            t = math.sin(self._phase * 0.8) * 0.5 + 0.5
+            seg = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                NSMakeRect(track_x + t * (track_w - seg_w), cy - track_h / 2.0,
+                           seg_w, track_h),
+                track_h / 2.0,
+                track_h / 2.0,
             )
-            color = _TEAL if i % 4 else _GOLD
-            _srgb(color, alpha).setFill()
-            NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-                NSMakeRect(x0 + i * slot, cy - h / 2.0, bar_w, h), 1.5, 1.5
-            ).fill()
+            NSGradient.alloc().initWithStartingColor_endingColor_(
+                _srgb(_TEAL, 0.0), _srgb(_TEAL, 0.85)
+            ).drawInBezierPath_angle_(seg, 0.0)
+            NSGraphicsContext.restoreGraphicsState()
+            pct_text = "…"
+        else:
+            f = self._fraction
+            f = 0.0 if f < 0.0 else 1.0 if f > 1.0 else f
+            fill_w = track_w * f
+            if 0.0 < fill_w < track_h:
+                fill_w = track_h  # keep a visible rounded cap at very low %
+            if fill_w > 0.0:
+                _srgb(_TEAL, 0.92).setFill()
+                NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                    NSMakeRect(track_x, cy - track_h / 2.0, fill_w, track_h),
+                    track_h / 2.0,
+                    track_h / 2.0,
+                ).fill()
+            pct_text = f"{int(f * 100)}%"
+
+        # Percentage (or '…' while loading), right-aligned beside the bar.
+        ns_pct = NSString.stringWithString_(pct_text)
+        pct_attrs = {
+            NSFontAttributeName: digit_font,
+            NSForegroundColorAttributeName: _srgb(_TEXT, 0.92),
+        }
+        pct_size = ns_pct.sizeWithAttributes_(pct_attrs)
+        px = rect.origin.x + rect.size.width - float(pct_size.width)
+        py = cy - float(pct_size.height) / 2.0
+        ns_pct.drawAtPoint_withAttributes_((px, py), pct_attrs)
 
 
 class Overlay:
@@ -258,6 +331,10 @@ class Overlay:
     def push_level(self, level: float) -> None:
         if self._view is not None:
             self._view.pushLevel_(level)
+
+    def update_progress(self, fraction, elapsed: float) -> None:
+        if self._view is not None:
+            self._view.update_progress(fraction, elapsed)
 
     def tick(self) -> None:
         if self._view is not None and self._visible:

@@ -102,6 +102,8 @@ def transcribe_file(
     on_partial: Optional[Callable[[Segment], None]] = None,
     on_status: Optional[Callable[[str], None]] = None,
     cancel_requested: Optional[Callable[[], bool]] = None,
+    total_duration: Optional[float] = None,
+    on_progress: Optional[Callable[[float], None]] = None,
 ) -> list[Segment]:
     if diarize and not hf_token:
         raise RuntimeError(
@@ -252,6 +254,13 @@ def transcribe_file(
                         on_partial(seg)
                     except Exception as exc:
                         print(f"[transcribe] on_partial raised: {exc}", file=sys.stderr)
+                if on_progress is not None and total_duration and total_duration > 0:
+                    frac = seg.end / total_duration
+                    frac = 0.0 if frac < 0.0 else 1.0 if frac > 1.0 else frac
+                    try:
+                        on_progress(frac)
+                    except Exception as exc:
+                        print(f"[transcribe] on_progress raised: {exc}", file=sys.stderr)
 
     reader = threading.Thread(target=_pump_stdout, daemon=True, name="whisperx-stdout")
     reader.start()
@@ -336,7 +345,9 @@ def transcribe_file(
 def transcribe(
     wav_path: Path,
     *,
+    duration: Optional[float] = None,
     cancel_requested: Optional[Callable[[], bool]] = None,
+    on_progress: Optional[Callable[[float], None]] = None,
 ) -> str:
     segments = transcribe_file(
         wav_path,
@@ -345,6 +356,8 @@ def transcribe(
         hf_token=None,
         language="en",
         cancel_requested=cancel_requested,
+        total_duration=duration,
+        on_progress=on_progress,
     )
     text = " ".join(s.text for s in segments).strip()
     return " ".join(text.split())

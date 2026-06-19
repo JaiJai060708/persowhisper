@@ -342,6 +342,8 @@ class PersoWhisperApp(rumps.App):
         elif s is State.TRANSCRIBING:
             if self._last_state is not State.TRANSCRIBING:
                 self._overlay.show("transcribing")
+            fraction, elapsed = self._controller.transcribe_view()
+            self._overlay.update_progress(fraction, elapsed)
             self._overlay.tick()
         else:
             if self._last_state is not State.IDLE:
