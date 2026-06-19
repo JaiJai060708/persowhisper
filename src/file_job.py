@@ -11,7 +11,7 @@ from AppKit import NSAlert, NSAlertStyleCritical, NSOpenPanel
 from Foundation import NSOperationQueue
 
 from .config import (
-    LARGE_MODEL,
+    MODEL,
     SOUND_DONE,
     SOUND_ERR,
     SOUND_STOP,
@@ -127,7 +127,7 @@ class FileJobController:
             token = SETTINGS.hf_token
             segments = transcribe_file(
                 path,
-                model=LARGE_MODEL,
+                model=MODEL,
                 diarize=True,
                 hf_token=token,
                 language="en",

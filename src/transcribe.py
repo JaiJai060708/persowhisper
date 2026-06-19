@@ -25,9 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from .config import WHISPERX_BIN
+from .config import MODEL, WHISPERX_BIN
 from .hf_cache import clean_stale_locks
-from .settings import SETTINGS
 
 
 @dataclass(frozen=True)
@@ -341,7 +340,7 @@ def transcribe(
 ) -> str:
     segments = transcribe_file(
         wav_path,
-        model=SETTINGS.model,
+        model=MODEL,
         diarize=False,
         hf_token=None,
         language="en",

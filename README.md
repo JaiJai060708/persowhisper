@@ -102,8 +102,8 @@ The configurable knobs live as module-level constants near the top of
 
 - `HOTKEY` — default `keyboard.Key.cmd_r`. Switch to `Key.cmd_l`,
   `Key.alt_r`, `Key.f13`, etc.
-- `WHISPERX_MODEL` — default `large-v3`. Use `medium`, `small`, etc. for
-  faster transcription.
+- `MODEL` (in [`src/config.py`](./src/config.py)) — the single whisperx model
+  used for both dictation and file import. Default `large-v3`.
 - `TAP_MAX_HOLD_MS`, `MIN_RECORDING_SEC`, `MAX_RECORDING_SEC`,
   `PASTE_RESTORE_DELAY_SEC` — timing tuning.
 

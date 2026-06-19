@@ -1,9 +1,8 @@
-"""Pre-download (or verify) the faster-whisper model snapshots used by
+"""Pre-download (or verify) the faster-whisper model snapshot used by
 PersoWhisper. Run via ./setup.sh, or:
 
-    python -m src.download                   # all models in AVAILABLE_MODELS
-    python -m src.download large-v3          # only this one
-    python -m src.download large-v3 medium.en
+    python -m src.download                   # the default model
+    python -m src.download large-v3          # an explicit model
 
 Idempotent — if a model is already in the local Hugging Face cache,
 snapshot_download is a no-op verify. Stale lock files from interrupted
@@ -16,7 +15,7 @@ import sys
 import time
 from typing import Sequence
 
-from .config import AVAILABLE_MODELS
+from .config import MODEL
 from .hf_cache import clean_stale_locks
 
 
@@ -40,15 +39,7 @@ def ensure(model: str) -> str:
 
 
 def main(argv: Sequence[str] = tuple(sys.argv)) -> int:
-    targets = list(argv[1:]) or list(AVAILABLE_MODELS)
-    unknown = [m for m in targets if m not in AVAILABLE_MODELS]
-    if unknown:
-        print(
-            f"unknown model(s): {unknown}\n"
-            f"valid: {', '.join(AVAILABLE_MODELS)}",
-            file=sys.stderr,
-        )
-        return 1
+    targets = list(argv[1:]) or [MODEL]
 
     clean_stale_locks()
 

@@ -26,11 +26,8 @@ MAX_RECORDING_SEC = 5 * 60
 
 # --- Transcription -----------------------------------------------------------
 
-# User-selectable at runtime via the menu bar; persisted in SETTINGS_PATH.
-AVAILABLE_MODELS: tuple[str, ...] = ("large-v3", "medium.en")
-DEFAULT_MODEL = "large-v3"
-# Forced model for the file-import flow regardless of the dictation setting.
-LARGE_MODEL = "large-v3"
+# Single transcription model used for both dictation and file import.
+MODEL = "large-v3"
 SETTINGS_PATH = Path.home() / ".persowhisper.json"
 
 
