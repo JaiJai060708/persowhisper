@@ -1,14 +1,13 @@
 """Run the local whisperx CLI on an audio/video file and return the result.
 
-Two entry points:
-- ``transcribe(wav_path)`` — the dictation flow. Returns joined plain text using
-  the user-selected model and no diarization. Behaviour is preserved exactly
-  from the pre-refactor version.
-- ``transcribe_file(audio_path, *, model, diarize, hf_token, language,
-  on_partial)`` — the general entry point used by the file-import flow. Streams
-  partial segments via ``on_partial`` (no speaker labels yet — those only
-  arrive in the final JSON), then returns the final list of ``Segment`` records
-  with start/end timestamps and (when ``diarize=True``) a speaker label.
+``transcribe_file(audio_path, *, model, diarize, hf_token, language,
+on_partial)`` is the entry point used by the file-import flow. It streams
+partial segments via ``on_partial`` (no speaker labels yet — those only arrive
+in the final JSON), then returns the final list of ``Segment`` records with
+start/end timestamps and (when ``diarize=True``) a speaker label.
+
+The dictation flow no longer goes through the CLI — it uses the warm in-process
+model in ``engine.py`` to avoid reloading on every utterance.
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from .config import MODEL, WHISPERX_BIN
+from .config import WHISPERX_BIN
 from .hf_cache import clean_stale_locks
 
 
@@ -340,24 +339,3 @@ def transcribe_file(
     except Exception:
         pass
     return segments
-
-
-def transcribe(
-    wav_path: Path,
-    *,
-    duration: Optional[float] = None,
-    cancel_requested: Optional[Callable[[], bool]] = None,
-    on_progress: Optional[Callable[[float], None]] = None,
-) -> str:
-    segments = transcribe_file(
-        wav_path,
-        model=MODEL,
-        diarize=False,
-        hf_token=None,
-        language="en",
-        cancel_requested=cancel_requested,
-        total_duration=duration,
-        on_progress=on_progress,
-    )
-    text = " ".join(s.text for s in segments).strip()
-    return " ".join(text.split())

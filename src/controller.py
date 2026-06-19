@@ -21,11 +21,12 @@ from .config import (
     SOUND_START,
     SOUND_STOP,
 )
+from .engine import ENGINE, transcribe
 from .paste import PasteTarget, capture_paste_target, paste
 from .recorder import Recorder
 from .state import State
 from .system import notify, play
-from .transcribe import TranscriptionCancelled, transcribe
+from .transcribe import TranscriptionCancelled
 
 
 DUPLICATE_TAP_SUPPRESS_SEC = 0.12
@@ -112,6 +113,9 @@ class Controller:
             play(SOUND_ERR)
             notify("PersoWhisper — mic error", str(exc))
             return
+        # Load the model now, in the background, so it is warm (or warming) by
+        # the time the user stops talking instead of blocking after the fact.
+        ENGINE.prewarm()
         with self._lock:
             self._state = State.RECORDING
             self._paste_target = paste_target
@@ -162,6 +166,9 @@ class Controller:
         if cancel_recording:
             print("[controller] recording cancelled", file=sys.stderr)
             self._recorder.cancel()
+            # No transcription will run, so free the model we warmed at record
+            # start. (When transcribing, the worker's finally handles release.)
+            ENGINE.release()
             play(SOUND_STOP)
         elif signal_transcription:
             print("[controller] transcription cancellation requested", file=sys.stderr)
@@ -242,4 +249,7 @@ class Controller:
                     wav_path.unlink()
                 except Exception:
                     pass
+            # Done with the model (success, error, or cancellation) — free it so
+            # the process idles low until the next recording warms it again.
+            ENGINE.release()
             self._finish_transcription(cancel_event)

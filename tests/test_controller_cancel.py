@@ -45,7 +45,7 @@ class ControllerCancelTest(unittest.TestCase):
         with patch("src.controller.play"), patch(
             "src.controller.capture_paste_target",
             return_value=None,
-        ), patch(
+        ), patch("src.controller.ENGINE"), patch(
             "src.controller.time.monotonic",
             side_effect=[100.0, 100.05],
         ):
@@ -93,7 +93,7 @@ class ControllerCancelTest(unittest.TestCase):
         with patch("src.controller.play"), patch(
             "src.controller.capture_paste_target",
             return_value=target,
-        ):
+        ), patch("src.controller.ENGINE"):
             controller._start_recording()
 
         self.assertIs(controller.state, State.RECORDING)
