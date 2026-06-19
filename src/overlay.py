@@ -51,11 +51,6 @@ def _srgb(rgb, alpha=1.0):
     return NSColor.colorWithSRGBRed_green_blue_alpha_(r, g, b, alpha)
 
 
-def _format_elapsed(seconds) -> str:
-    s = int(seconds) if seconds and seconds > 0 else 0
-    return f"{s // 60}:{s % 60:02d}"
-
-
 class WaveView(NSView):
     """Custom NSView that draws either a live waveform or an animated shimmer."""
 
@@ -67,7 +62,6 @@ class WaveView(NSView):
         self._mode = "recording"
         self._phase = 0.0
         self._fraction = None  # None = indeterminate (model loading / VAD)
-        self._elapsed = 0.0
         return self
 
     def setMode_(self, mode):
@@ -76,14 +70,12 @@ class WaveView(NSView):
             if mode != "recording":
                 self._levels.clear()
                 self._fraction = None
-                self._elapsed = 0.0
         self.setNeedsDisplay_(True)
 
     @objc.python_method
-    def update_progress(self, fraction, elapsed):
+    def update_progress(self, fraction):
         # Stored for the next drawRect_; the caller ticks immediately after.
         self._fraction = fraction
-        self._elapsed = elapsed
 
     def pushLevel_(self, level):
         v = level * LEVEL_GAIN
@@ -191,21 +183,10 @@ class WaveView(NSView):
 
     @objc.python_method
     def _drawProgress(self, bounds, rect):
-        """A progress bar (% of audio transcribed) plus an elapsed timer. While
-        the model loads (no fraction yet) the bar sweeps as an indeterminate."""
+        """A progress bar showing the % of audio transcribed. While the model
+        loads (no fraction yet) the bar sweeps as an indeterminate."""
         digit_font = NSFont.monospacedDigitSystemFontOfSize_weight_(
             11.0, NSFontWeightRegular
-        )
-
-        # Elapsed timer, right-aligned in the title row.
-        ns_timer = NSString.stringWithString_(_format_elapsed(self._elapsed))
-        timer_attrs = {
-            NSFontAttributeName: digit_font,
-            NSForegroundColorAttributeName: _srgb(_TEXT, 0.66),
-        }
-        tw = float(ns_timer.sizeWithAttributes_(timer_attrs).width)
-        ns_timer.drawAtPoint_withAttributes_(
-            (bounds.size.width - 16.0 - tw, bounds.size.height - 23.0), timer_attrs
         )
 
         # Progress track, leaving room for the percentage on the right.
@@ -332,9 +313,9 @@ class Overlay:
         if self._view is not None:
             self._view.pushLevel_(level)
 
-    def update_progress(self, fraction, elapsed: float) -> None:
+    def update_progress(self, fraction) -> None:
         if self._view is not None:
-            self._view.update_progress(fraction, elapsed)
+            self._view.update_progress(fraction)
 
     def tick(self) -> None:
         if self._view is not None and self._visible:
