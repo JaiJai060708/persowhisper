@@ -208,7 +208,6 @@ class Controller:
                 return
 
             print(f"[controller] transcript: {text!r}", file=sys.stderr)
-            self._finish_transcription(cancel_event)
             if paste(
                 text,
                 cancel_requested=cancel_event.is_set,
