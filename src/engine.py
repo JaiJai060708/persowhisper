@@ -114,15 +114,37 @@ class _Engine:
             print("[engine] model released", file=sys.stderr)
 
     def _ensure_model(self):
-        """Block until the model is loaded, kicking off the load if needed."""
-        self.prewarm()
-        self._ready.wait()
-        with self._lock:
-            if self._model is None:
-                raise RuntimeError(
-                    f"whisperx model failed to load: {self._load_error}"
-                )
-            return self._model
+        """Block until the model is loaded, (re-)starting the load if needed.
+
+        The wait is *bounded and looped* rather than a single unconditional
+        ``self._ready.wait()`` so it self-heals if a concurrent ``release()``
+        clears the in-flight load out from under us. That is the cancel-path
+        race: ``Controller.cancel()`` reopens the IDLE state while the previous
+        dictation's worker is still alive; a new worker calls ``prewarm()`` (a
+        no-op while the old model/loader still lingers), then the old worker's
+        ``finally`` runs ``release()`` — bumping the generation, clearing
+        ``_ready`` and setting ``_loading=False`` with no live loader. A plain
+        ``_ready.wait()`` would then block forever, surfacing as the overlay
+        stuck on "Loading…". Re-checking under the lock each tick lets us re-arm
+        the load instead. The generation check in ``_load`` still guarantees a
+        model handed back here is the current one.
+        """
+        while True:
+            with self._lock:
+                if self._model is not None:
+                    return self._model
+                if self._load_error is not None:
+                    raise RuntimeError(
+                        f"whisperx model failed to load: {self._load_error}"
+                    )
+                need_load = not self._loading
+            if need_load:
+                # No model, no error, and no loader running: a release()
+                # invalidated the in-flight load — kick off a fresh one.
+                self.prewarm()
+            # Bounded so a _ready that was cleared mid-flight can't park us
+            # forever; loop and re-check / re-arm on the next tick.
+            self._ready.wait(timeout=0.25)
 
     def transcribe_segments(
         self,
